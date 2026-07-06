@@ -1,0 +1,98 @@
+{
+  "entities": {
+    "Registration": {
+      "title": "Registration",
+      "description": "An individual testing registration with parameters and results.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique registration ID (e.g. reg-0001)" },
+        "noReg": { "type": "string", "description": "Sequential code" },
+        "ppjCode": { "type": "string" },
+        "ppjFull": { "type": "string" },
+        "prCode": { "type": "string" },
+        "poCode": { "type": "string" },
+        "vendor": { "type": "string" },
+        "category": { "type": "string" },
+        "standardName": { "type": "string" },
+        "standardSource": { "type": "string" },
+        "itemName": { "type": "string" },
+        "description": { "type": "string" },
+        "quantity": { "type": "string" },
+        "points": { "type": "number" },
+        "status": { "type": "string" },
+        "tanggalPPJ": { "type": "string" },
+        "tanggalDiterima": { "type": "string" },
+        "results": { "type": "array" },
+        "pengujiInitials": { "type": "string" },
+        "tanggalDiuji": { "type": "string" },
+        "customParams": { "type": "array" },
+        "selectedTools": { "type": "array" },
+        "reviewerInitials": { "type": "string" },
+        "reviewerComments": { "type": "string" },
+        "tanggalTerbit": { "type": "string" },
+        "noSurat": { "type": "string" },
+        "trustCardId": { "type": "string" },
+        "useQrSignature": { "type": "boolean" }
+      },
+      "required": ["id", "noReg", "ppjCode", "itemName", "category", "status"]
+    },
+    "Standard": {
+      "title": "Standard",
+      "description": "Standard quality reference values.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string" },
+        "name": { "type": "string" },
+        "source": { "type": "string" },
+        "description": { "type": "string" },
+        "parameters": { "type": "array" }
+      },
+      "required": ["id", "category", "name", "parameters"]
+    },
+    "Signature": {
+      "title": "Signature",
+      "description": "Approved signatures for reports.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "position": { "type": "string" },
+        "initials": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "name", "position", "initials", "active"]
+    },
+    "User": {
+      "title": "User",
+      "description": "System access accounts.",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string" },
+        "name": { "type": "string" },
+        "initials": { "type": "string" }
+      },
+      "required": ["username", "password", "role"]
+    }
+  },
+  "firestore": {
+    "/registrations/{registrationId}": {
+      "schema": "Registration",
+      "description": "Collection of testing registrations."
+    },
+    "/standards/{standardId}": {
+      "schema": "Standard",
+      "description": "Collection of QC standards."
+    },
+    "/signatures/{signatureId}": {
+      "schema": "Signature",
+      "description": "Collection of authorized digital signatures."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Access credentials database."
+    }
+  }
+}

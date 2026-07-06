@@ -1,0 +1,6 @@
+{
+  "name": "IRIS",
+  "description": "Integrated Report Inspection System - Sistem report hasil pengujian Departemen ITRK",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

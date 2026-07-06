@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Registrations
+    match /registrations/{registrationId} {
+      allow read, write: if true;
+    }
+
+    // Standards
+    match /standards/{standardId} {
+      allow read, write: if true;
+    }
+
+    // Signatures
+    match /signatures/{signatureId} {
+      allow read, write: if true;
+    }
+
+    // Users
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+  }
+}
