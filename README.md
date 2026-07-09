@@ -1,20 +1,19 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+---
+title: IRIS Integrated Report System
+emoji: 📊
+colorFrom: green
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+---
 
-# Run and deploy your AI Studio app
+# IRIS - Integrated Report System
 
-This contains everything you need to run your app locally.
+Sistem Manajemen Pengujian dan Sertifikasi Laporan ITRK.
 
-View your app in AI Studio: https://ai.studio/apps/ea8f9c98-a2c7-4b67-bbd1-d65214dcd08c
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Cara Menjalankan Secara Lokal
+1. Install dependensi: `npm install`
+2. Jalankan mode development: `npm run dev`
+3. Build untuk produksi: `npm run build`
+4. Jalankan hasil build: `npm run start`

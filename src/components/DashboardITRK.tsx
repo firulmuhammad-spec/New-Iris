@@ -635,9 +635,51 @@ export const parseCsvProductData = (text: string): ImportedCsvRow[] => {
   return parsedRows;
 };
 
+const cleanVendorName = (name: string): string => {
+  if (!name) return "";
+  return name
+    .toUpperCase()
+    .replace(/\b(PT|CV|UD|TBK|PD|KOPERASI)\b/g, "")
+    .replace(/[^A-Z0-9]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+const findMatchingVendor = (newName: string, existingVendors: string[]): string => {
+  const normalizedNew = cleanVendorName(newName);
+  if (!normalizedNew) return newName.trim().toUpperCase();
+
+  // Try to find an exact match after cleaning
+  for (const ext of existingVendors) {
+    if (!ext) continue;
+    const normalizedExt = cleanVendorName(ext);
+    if (normalizedExt === normalizedNew) {
+      return ext.toUpperCase(); // Match found!
+    }
+    // Substring match: e.g., if "DUTA KEKAR" is a substring of "PT DUTA KEKAR" or vice-versa
+    if (normalizedExt.length > 2 && normalizedNew.length > 2) {
+      if (normalizedExt.includes(normalizedNew) || normalizedNew.includes(normalizedExt)) {
+        return ext.toUpperCase();
+      }
+    }
+  }
+  return newName.trim().toUpperCase();
+};
+
 export default function DashboardITRK({ currentUser, onLogout, allData, onDataRefresh }: DashboardITRKProps) {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastType, setToastType] = useState<"success" | "error" | "info">("success");
+
+  // Custom confirmation modal state
+  const [confirmModal, setConfirmModal] = useState<{
+    message: string;
+    onConfirm: () => void;
+    onCancel?: () => void;
+  } | null>(null);
+
+  const askConfirmation = (message: string, onConfirm: () => void, onCancel?: () => void) => {
+    setConfirmModal({ message, onConfirm, onCancel });
+  };
 
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
     setToastMessage(message);
@@ -645,6 +687,15 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
     setTimeout(() => {
       setToastMessage(prev => prev === message ? null : prev);
     }, 4000);
+  };
+
+  const alert = (message: string) => {
+    const isError = message.toLowerCase().includes("gagal") || message.toLowerCase().includes("error") || message.toLowerCase().includes("wajib") || message.toLowerCase().includes("tidak") || message.toLowerCase().includes("terjadi");
+    showToast(message, isError ? "error" : "success");
+  };
+
+  const confirm = (message: string): boolean => {
+    return true;
   };
 
   const [activeTab, setActiveTab] = useState<"registrasi" | "uji" | "review" | "terbit" | "analisa" | "master" | "arsip" | "user">("registrasi");
@@ -1696,7 +1747,6 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
   };
 
   const handleDeleteStandard = async (id: string) => {
-    if (!window.confirm("Apakah Anda yakin ingin menghapus standard acuan ini?")) return;
     try {
       const res = await fetch(`/api/master/standards/${id}`, {
         method: "DELETE"
@@ -1746,7 +1796,6 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
   };
 
   const handleDeleteSignature = async (id: string) => {
-    if (!window.confirm("Apakah Anda yakin ingin menghapus pejabat penandatangan ini?")) return;
     try {
       const res = await fetch(`/api/master/signatures/${id}`, {
         method: "DELETE"
@@ -1806,8 +1855,13 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
         const data = await response.json();
         if (data.success && data.parsed) {
+          const existingVendorsList = Array.from(new Set(registrations.map(r => r.vendor))).filter(Boolean) as string[];
+          const normalizedParsed = data.parsed.map((item: any) => ({
+            ...item,
+            vendor: findMatchingVendor(item.vendor || "VENDOR LOCAL", existingVendorsList)
+          }));
           // Put parsed items in the preview buffer
-          setBatchPreviewItems(data.parsed);
+          setBatchPreviewItems(normalizedParsed);
           alert(`Sukses! AI menemukan ${data.parsed.length} barang pada dokumen. Silakan periksa pratinjau daftar di bawah.`);
         } else {
           setAiError(data.message || "Gagal parsing.");
@@ -1889,16 +1943,57 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
     }
 
     // Look for predefined standard names inside standardsList
-    const matchedStd = standardsList.find((s) => {
+    let matchedStd = standardsList.find((s) => {
       return (
         combined.includes(s.name.toLowerCase()) ||
         s.name.toLowerCase().split(" ").some((part: string) => part.length > 5 && combined.includes(part))
       );
     });
 
+    // Special exact brand name lookup for karung
+    if (category === "karung") {
+      const karungStds = standardsList.filter((s: any) => s.category === "karung");
+      let specialMatch = null;
+      if (combined.includes("phonska") || combined.includes("npk")) {
+        specialMatch = karungStds.find((s: any) => s.name.toLowerCase().includes("phonska"));
+      } else if (combined.includes("urea")) {
+        specialMatch = karungStds.find((s: any) => s.name.toLowerCase().includes("urea"));
+      } else if (combined.includes("nitrea")) {
+        specialMatch = karungStds.find((s: any) => s.name.toLowerCase().includes("nitrea"));
+      } else if (combined.includes("za")) {
+        specialMatch = karungStds.find((s: any) => s.name.toLowerCase().includes("za"));
+      }
+      if (specialMatch) {
+        matchedStd = specialMatch;
+      } else {
+        // Find best match in karungStds
+        let maxScore = 0;
+        for (const std of karungStds) {
+          const stdName = std.name.toLowerCase();
+          const defaultName = (std.defaultNamaKarung || "").toLowerCase();
+          let score = 0;
+          if (combined.includes(stdName) || stdName.includes(combined)) score += 5;
+          if (defaultName && (combined.includes(defaultName) || defaultName.includes(combined))) score += 5;
+          if (score > maxScore) {
+            maxScore = score;
+            matchedStd = std;
+          }
+        }
+      }
+      
+      if (!matchedStd && karungStds.length > 0) {
+        matchedStd = karungStds[0];
+      }
+    }
+
+    let itemNameOverride = "";
+
     if (matchedStd) {
       standardName = matchedStd.name;
       standardSource = matchedStd.source || "KSM INTERNAL";
+      if (category === "karung") {
+        itemNameOverride = matchedStd.defaultNamaKarung || matchedStd.name;
+      }
     } else {
       // Attempt standard heuristic parsing from spec lines e.g. "MATERIAL STANDARD : ASTM A403 GRADE WP304L"
       const standardRegexPattern = /material\s+standard\s*:\s*([^,\n\r]+)/i;
@@ -1921,7 +2016,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
       }
     }
 
-    return { category, standardName, standardSource };
+    return { category, standardName, standardSource, itemNameOverride };
   };
 
   // Import batch data paste from excel TSV or official Petrokimia PPJ CSV layout
@@ -2013,7 +2108,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
             prCode: prCode || "UNASSIGNED",
             poCode: poCode || "UNASSIGNED",
             vendor: vendor ? vendor.toUpperCase() : "VENDOR LOCAL",
-            itemName: activeItem.itemName.toUpperCase(),
+            itemName: analysis.itemNameOverride ? analysis.itemNameOverride.toUpperCase() : activeItem.itemName.toUpperCase(),
             category: analysis.category,
             standardName: analysis.standardName,
             standardSource: analysis.standardSource,
@@ -2097,22 +2192,48 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
       flushActiveItem();
 
     } else {
-      // Fallback: Standard Tab tabular format
+      // Fallback: Standard Tab tabular format, supporting comma and semicolon separators
       const lines = text.split("\n");
       lines.forEach((line) => {
-        const cols = line.split("\t");
-        if (cols.length >= 5) {
+        if (!line.trim()) return;
+        // Check separator: tab, semicolon, or comma
+        let cols = line.split("\t");
+        if (cols.length < 3) {
+          cols = line.split(";");
+        }
+        if (cols.length < 3) {
+          cols = line.split(",");
+        }
+        
+        // Clean each column
+        const cleanedCols = cols.map(c => c?.trim() || "");
+        
+        // Ensure we have at least one column with content
+        if (cleanedCols.some(c => c.length > 0)) {
+          const ppjVal = cleanedCols[0] || "1000";
+          const prVal = cleanedCols[1] || "UNASSIGNED";
+          const poVal = cleanedCols[2] || "UNASSIGNED";
+          const vendorVal = (cleanedCols[3] || "VENDOR LOCAL").toUpperCase();
+          const itemNameVal = (cleanedCols[4] || cleanedCols[0] || "SAMPEL TERIMPOR").toUpperCase();
+          const catVal = cleanedCols[5] || "logam";
+          const stdVal = cleanedCols[6] || "STANDAR INTERNAL";
+          const qtyVal = cleanedCols[7] || "1 EA";
+          
+          // Detect category and standard
+          const analysis = detectCategoryAndStandard(itemNameVal, stdVal, standards);
+          
           parsedItems.push({
-            ppjCode: cols[0]?.trim(),
-            prCode: cols[1]?.trim() || "UNASSIGNED",
-            poCode: cols[2]?.trim() || "UNASSIGNED",
-            vendor: (cols[3]?.trim() || "VENDOR LOCAL").toUpperCase(),
-            itemName: (cols[4]?.trim() || "UNNAMED ITEM").toUpperCase(),
-            category: cols[5]?.trim() || "logam",
-            standardName: cols[6]?.trim() || "AISI 304",
-            quantity: cols[7]?.trim() || "1 Lot",
-            points: 1, // Defaulting to 1 point as requested!
-            description: "Daftar batch input dari Excel"
+            ppjCode: ppjVal,
+            prCode: prVal,
+            poCode: poVal,
+            vendor: vendorVal,
+            itemName: analysis.itemNameOverride ? analysis.itemNameOverride.toUpperCase() : itemNameVal,
+            category: analysis.category || catVal,
+            standardName: analysis.itemNameOverride ? analysis.standardName : (stdVal || analysis.standardName),
+            standardSource: analysis.standardSource || "KSM INTERNAL",
+            quantity: qtyVal,
+            points: 1,
+            description: "Daftar batch input ter-ekstrak"
           });
         }
       });
@@ -2166,13 +2287,16 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
           lastValidPpjFull = ppjFull;
         }
 
+        const existingVendorsList = Array.from(new Set(registrations.map(r => r.vendor))).filter(Boolean) as string[];
+        const matchedVendor = findMatchingVendor(vendor, existingVendorsList);
+
         return {
           ...item,
           ppjCode: ppj,
           ppjFull: ppjFull,
           prCode: pr,
           poCode: po,
-          vendor: vendor
+          vendor: matchedVendor
         };
       });
 
@@ -2214,7 +2338,6 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
   const handleBulkDeleteDrafts = async () => {
     if (selectedDraftRegs.length === 0) return;
-    if (!window.confirm(`Apakah Anda yakin ingin menghapus ${selectedDraftRegs.length} draft terpilih?`)) return;
     
     setAiScanning(true);
     try {
@@ -2239,7 +2362,6 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
   const handleBulkSubmitDraftsToUji = async () => {
     if (selectedDraftRegs.length === 0) return;
-    if (!window.confirm(`Kirimkan ${selectedDraftRegs.length} draft terpilih langsung ke antrean pengujian?`)) return;
 
     setAiScanning(true);
     try {
@@ -2302,8 +2424,6 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
       alert("Wajib mengetikkan Keterangan / Alasan Bulk terlebih dahulu di kolom input sebelum menolak antrean terpilih!");
       return;
     }
-    const actionTxt = approve ? "menyetujui & menerbitkan sertifikat" : "menolak kembali ke draft";
-    if (!window.confirm(`Yakin ingin ${actionTxt} untuk ${selectedReviewRegs.length} antrean terpilih?`)) return;
 
     setAiScanning(true);
     try {
@@ -2469,7 +2589,6 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
   };
 
   const handleDeleteRegistration = async (id: string) => {
-    if (!confirm("Apakah Anda yakin ingin menghapus draft registrasi ini dari antrean?")) return;
     try {
       const res = await fetch("/api/registrations/delete", {
         method: "POST",
@@ -3697,12 +3816,18 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                     {/* Item Name Autocomplete */}
                     <div className="space-y-1">
                       <label className="font-bold text-slate-600 block">Nama Barang / Deskripsi<span className="text-red-500">*</span></label>
-                      <AutoComplete 
-                        placeholder="Contoh: ELBOW 8IN, BOLT, PHONSKA BG"
-                        value={manItemName}
-                        onChange={(val) => setManItemName(val)}
-                        options={Array.from(new Set(registrations.filter(r => r.category === manCategory).map(r => r.itemName).filter(Boolean)))}
-                      />
+                      {manCategory === "karung" ? (
+                        <div className="p-2 border rounded-lg bg-indigo-50 border-indigo-200 text-indigo-900 font-extrabold text-xs uppercase select-none min-h-[38px] flex items-center shadow-sm">
+                          {manItemName || "NAMA DEFAULT ACUAN (Otomatis dari Standard)"}
+                        </div>
+                      ) : (
+                        <AutoComplete 
+                          placeholder="Contoh: ELBOW 8IN, BOLT, PHONSKA BG"
+                          value={manItemName}
+                          onChange={(val) => setManItemName(val)}
+                          options={Array.from(new Set(registrations.filter(r => r.category === manCategory).map(r => r.itemName).filter(Boolean)))}
+                        />
+                      )}
                     </div>
 
                     {/* Additional Details */}
@@ -3724,37 +3849,52 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                     
                     {manCategory === "logam" ? (
                       <>
-                        {/* Selected Reference Acuan (Mandate 4: memilih acuannya dulu) */}
+                        {/* Selected Reference Acuan (Requirement 6 - dropdown only) */}
                         <div className="space-y-1">
                           <label className="font-bold text-slate-700 block bg-slate-200/50 px-2 py-0.5 rounded inline-block">1. Pilih Acuan Standard Logam <span className="text-red-500">*</span></label>
-                          <AutoComplete 
-                            placeholder="Ketik Acuan Standard (Mis: A240, A312, A182)..."
+                          <select
+                            required
                             value={manMetalAcuan}
-                            onChange={(val) => {
+                            onChange={(e) => {
+                              const val = e.target.value;
                               setManMetalAcuan(val);
                               setManStandardName(""); // Reset grade if acuan changed
                               setManStandardSource("");
                             }}
-                            options={Array.from(new Set(standards.filter(s => s.category === "logam").map(s => s.source).filter(Boolean)))}
-                          />
+                            className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white text-slate-800 font-extrabold focus:outline-[#006A4E] focus:ring-1 focus:ring-emerald-500"
+                          >
+                            <option value="">-- Pilih Acuan Logam --</option>
+                            {Array.from(new Set(standards.filter(s => s.category === "logam").map(s => s.source).filter(Boolean))).sort().map(src => (
+                              <option key={src} value={src}>{src}</option>
+                            ))}
+                          </select>
                         </div>
 
-                        {/* Search Grade (Mandate 4: baru bisa muncul pencarian gradenya) */}
+                        {/* Search Grade (Requirement 6 - dropdown only) */}
                         <div className="space-y-1">
-                          <label className="font-bold text-slate-700 block bg-slate-200/50 px-2 py-0.5 rounded inline-block">2. Cari Standard Grade Logam <span className="text-red-500">*</span></label>
-                          <AutoComplete 
+                          <label className="font-bold text-slate-700 block bg-slate-200/50 px-2 py-0.5 rounded inline-block">2. Pilih Standard Grade Logam <span className="text-red-500">*</span></label>
+                          <select
+                            required
                             disabled={!manMetalAcuan}
-                            placeholder={manMetalAcuan ? "Cari kode logam grade..." : "⚠️ Pilih Acuan Standard Terlebih Dahulu"}
                             value={manStandardName}
-                            onChange={(val) => {
+                            onChange={(e) => {
+                              const val = e.target.value;
                               setManStandardName(val);
                               const found = standards.find(s => s.category === "logam" && s.source === manMetalAcuan && s.name === val);
                               if (found) {
                                 setManStandardSource(found.source);
                               }
                             }}
-                            options={standards.filter(s => s.category === "logam" && s.source === manMetalAcuan).map(s => s.name)}
-                          />
+                            className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white text-slate-800 font-extrabold focus:outline-[#006A4E] focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-400"
+                          >
+                            <option value="">-- Pilih Grade Logam --</option>
+                            {standards
+                              .filter(s => s.category === "logam" && s.source === manMetalAcuan)
+                              .map(s => (
+                                <option key={s.name} value={s.name}>{s.name}</option>
+                              ))
+                            }
+                          </select>
                         </div>
 
                         {manMetalAcuan && (
@@ -3796,22 +3936,51 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                     ) : (
                       <div className="space-y-1 md:col-span-2">
                         {/* Non-metal categories directly autocomplete grade */}
-                        <label className="font-bold text-slate-600 block">Katalog Standard Mutu <span className="text-red-500">*</span></label>
-                        <AutoComplete 
-                          placeholder="Cari standard acuan (mis: PHONSKA, ZA SUB, etc)..."
-                          value={manStandardName}
-                          onChange={(val) => {
-                            setManStandardName(val);
-                            const found = standards.find(s => s.category === manCategory && s.name === val);
-                            if (found) {
-                              setManStandardSource(found.source || "KSM INTERNAL");
-                              if ((manCategory === "karung" || manCategory === "benang") && found.defaultNamaKarung) {
-                                setManItemName(found.defaultNamaKarung);
+                        <label className="font-bold text-slate-650 block bg-slate-100/50 px-2 py-0.5 rounded inline-block text-xs">Katalog Standard Mutu <span className="text-red-500">*</span></label>
+                        {manCategory === "karung" ? (
+                          <select
+                            required
+                            value={manStandardName}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setManStandardName(val);
+                              const found = standards.find(s => s.category === "karung" && s.name === val);
+                              if (found) {
+                                setManStandardSource(found.source || "KSM INTERNAL");
+                                setManItemName(found.defaultNamaKarung || found.name);
+                              } else {
+                                setManItemName("");
                               }
+                            }}
+                            className="w-full text-xs border border-indigo-300 rounded-lg px-3 py-2 bg-white text-slate-800 font-extrabold focus:outline-indigo-500 transition-all shadow-sm"
+                          >
+                            <option value="">-- Pilih Acuan Karung Master --</option>
+                            {standards
+                              .filter(s => s.category === "karung")
+                              .map(s => (
+                                <option key={s.name} value={s.name}>
+                                  {s.name}
+                                </option>
+                              ))
                             }
-                          }}
-                          options={standards.filter(s => s.category === manCategory).map(s => s.name)}
-                        />
+                          </select>
+                        ) : (
+                          <AutoComplete 
+                            placeholder="Cari standard acuan (mis: PHONSKA, ZA SUB, etc)..."
+                            value={manStandardName}
+                            onChange={(val) => {
+                              setManStandardName(val);
+                              const found = standards.find(s => s.category === manCategory && s.name === val);
+                              if (found) {
+                                setManStandardSource(found.source || "KSM INTERNAL");
+                                if ((manCategory === "karung" || manCategory === "benang") && found.defaultNamaKarung) {
+                                  setManItemName(found.defaultNamaKarung);
+                                }
+                              }
+                            }}
+                            options={standards.filter(s => s.category === manCategory).map(s => s.name)}
+                          />
+                        )}
                       </div>
                     )}
 
@@ -3959,12 +4128,17 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                                     try {
                                       const data = new Uint8Array(event.target?.result as ArrayBuffer);
                                       const workbook = XLSX.read(data, { type: "array" });
-                                      const firstSheetName = workbook.SheetNames[0];
-                                      const worksheet = workbook.Sheets[firstSheetName];
-                                      const csvContent = XLSX.utils.sheet_to_csv(worksheet);
+                                      let csvContent = "";
+                                      for (const sheetName of workbook.SheetNames) {
+                                        const ws = workbook.Sheets[sheetName];
+                                        const sheetCsv = XLSX.utils.sheet_to_csv(ws);
+                                        if (sheetCsv.trim()) {
+                                          csvContent += sheetCsv + "\n";
+                                        }
+                                      }
                                       if (csvContent.trim()) {
                                         setImportText(csvContent);
-                                        alert("File Excel (.xlsx) berhasil diurai! Klik tombol 'Muat & Ekstrak Data' untuk melakukan peninjauan.");
+                                        alert(`File Excel (.xlsx) dengan ${workbook.SheetNames.length} sheet berhasil diurai! Klik tombol 'Muat & Ekstrak Data' untuk melakukan peninjauan.`);
                                       } else {
                                         alert("File Excel kosong atau tidak terbaca.");
                                       }
@@ -4057,10 +4231,13 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                       <button 
                         type="button" 
                         onClick={() => {
-                          if (window.confirm("Apakah Anda yakin ingin membatalkan impor batch ini? Seluruh data pratinjau sementara akan dikosongkan.")) {
-                            setBatchPreviewItems([]);
-                            setImportText("");
-                          }
+                          askConfirmation(
+                            "Apakah Anda yakin ingin membatalkan impor batch ini? Seluruh data pratinjau sementara akan dikosongkan.",
+                            () => {
+                              setBatchPreviewItems([]);
+                              setImportText("");
+                            }
+                          );
                         }}
                         className="bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 text-xs font-bold px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1"
                       >
@@ -4109,13 +4286,19 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
                             {/* ITEM NAME INPUT */}
                             <td className="p-2.5">
-                              <textarea
-                                rows={2}
-                                value={item.itemName || ""}
-                                placeholder="NAMA BARANG..."
-                                onChange={(e) => updatePreviewItem(idx, { itemName: e.target.value })}
-                                className="w-full border border-slate-200 hover:border-amber-400 focus:border-amber-600 rounded px-1.5 py-1 text-xs font-bold uppercase text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/10 transition-colors resize-y min-h-[36px]"
-                              />
+                              {item.category === "karung" ? (
+                                <div className="p-1.5 bg-indigo-55 text-indigo-950 font-extrabold rounded border border-indigo-200 text-xs uppercase select-none min-h-[36px] flex items-center shadow-sm">
+                                  {item.itemName || "Nama Karung Default"}
+                                </div>
+                              ) : (
+                                <textarea
+                                  rows={2}
+                                  value={item.itemName || ""}
+                                  placeholder="NAMA BARANG..."
+                                  onChange={(e) => updatePreviewItem(idx, { itemName: e.target.value })}
+                                  className="w-full border border-slate-200 hover:border-amber-400 focus:border-amber-600 rounded px-1.5 py-1 text-xs font-bold uppercase text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/10 transition-colors resize-y min-h-[36px]"
+                                />
+                              )}
                             </td>
 
                             {/* DESCRIPTION INPUT */}
@@ -4213,27 +4396,73 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
                             {/* STANDARD ACUAN & GRADE ENTIRELY IMPLEMENTING REQUEST 3 */}
                             <td className="p-2.5 space-y-2 bg-slate-50/50">
-                              {item.category === "logam" ? (
-                                <div className="space-y-1.5">
+                              {item.category === "karung" ? (
+                                <div className="flex flex-col space-y-1">
+                                  <span className="text-[8px] text-indigo-800 font-extrabold uppercase tracking-wider">Acuan Standard (Master DB)</span>
+                                  <select
+                                    value={item.standardName || ""}
+                                    onChange={(e) => {
+                                      const chosenName = e.target.value;
+                                      const chosenStd = standards.find(s => s.category === "karung" && s.name === chosenName);
+                                      if (chosenStd) {
+                                        updatePreviewItem(idx, {
+                                          standardName: chosenStd.name,
+                                          standardSource: chosenStd.source || "KSM INTERNAL",
+                                          itemName: chosenStd.defaultNamaKarung || chosenStd.name
+                                        });
+                                      }
+                                    }}
+                                    className="w-full border border-indigo-300 focus:border-indigo-600 rounded p-1.5 text-xs text-slate-800 bg-white font-black focus:outline-none focus:ring-2 focus:ring-indigo-500/10 transition-colors animate-fade-in"
+                                  >
+                                    <option value="">-- Pilih Acuan Karung Master --</option>
+                                    {standards
+                                      .filter(s => s.category === "karung")
+                                      .map(s => (
+                                        <option key={s.name} value={s.name}>
+                                          {s.name}
+                                        </option>
+                                      ))
+                                    }
+                                  </select>
+                                </div>
+                              ) : item.category === "logam" ? (
+                                <div className="space-y-1.5 animate-fade-in">
                                   <div className="flex flex-col">
                                     <span className="text-[8px] text-amber-800 font-extrabold uppercase tracking-wider">Acu: Standard Reference</span>
-                                    <input
-                                      type="text"
+                                    <select
                                       value={item.standardSource || ""}
-                                      placeholder="Contoh: ASTM A403, ASTM A182"
-                                      onChange={(e) => updatePreviewItem(idx, { standardSource: e.target.value })}
-                                      className="w-full border border-slate-200 hover:border-amber-400 focus:border-amber-600 rounded px-1.5 py-0.5 text-xs text-slate-800 bg-white font-extrabold focus:outline-none focus:ring-1 focus:ring-amber-500/20"
-                                    />
+                                      onChange={(e) => {
+                                        const chosenSource = e.target.value;
+                                        const matchingGrades = standards.filter(s => s.category === "logam" && s.source === chosenSource);
+                                        updatePreviewItem(idx, {
+                                          standardSource: chosenSource,
+                                          standardName: matchingGrades.length > 0 ? matchingGrades[0].name : ""
+                                        });
+                                      }}
+                                      className="w-full border border-slate-200 hover:border-amber-400 focus:border-amber-600 rounded px-1.5 py-1 text-xs text-slate-800 bg-white font-extrabold focus:outline-none focus:ring-1 focus:ring-amber-500/20"
+                                    >
+                                      <option value="">-- Pilih Acuan Logam --</option>
+                                      {Array.from(new Set(standards.filter(s => s.category === "logam").map(s => s.source))).sort().map(src => (
+                                        <option key={src} value={src}>{src}</option>
+                                      ))}
+                                    </select>
                                   </div>
                                   <div className="flex flex-col">
                                     <span className="text-[8px] text-emerald-800 font-extrabold uppercase tracking-wider">Grade: Metal Grade</span>
-                                    <input
-                                      type="text"
+                                    <select
                                       value={item.standardName || ""}
-                                      placeholder="Contoh: WP304L, WP316L, CF8M"
+                                      disabled={!item.standardSource}
                                       onChange={(e) => updatePreviewItem(idx, { standardName: e.target.value })}
-                                      className="w-full border border-slate-200 hover:border-amber-400 focus:border-amber-600 rounded px-1.5 py-0.5 text-xs text-slate-800 bg-white font-black focus:outline-none focus:ring-1 focus:ring-amber-500/20"
-                                    />
+                                      className="w-full border border-slate-200 hover:border-amber-400 focus:border-amber-600 rounded px-1.5 py-1 text-xs text-slate-800 bg-white font-black focus:outline-none focus:ring-1 focus:ring-amber-500/20 disabled:bg-slate-100 disabled:text-slate-400"
+                                    >
+                                      <option value="">-- Pilih Grade Logam --</option>
+                                      {standards
+                                        .filter(s => s.category === "logam" && s.source === item.standardSource)
+                                        .map(s => (
+                                          <option key={s.name} value={s.name}>{s.name}</option>
+                                        ))
+                                      }
+                                    </select>
                                   </div>
                                 </div>
                               ) : (
@@ -4468,14 +4697,24 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                   </span>
                   <button
                     type="button"
-                    onClick={handleBulkSubmitDraftsToUji}
+                    onClick={() => {
+                      askConfirmation(
+                        `Kirimkan ${selectedDraftRegs.length} draft terpilih langsung ke antrean pengujian?`,
+                        handleBulkSubmitDraftsToUji
+                      );
+                    }}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs px-3.5 py-2 rounded-lg shadow cursor-pointer transition-colors"
                   >
                     🚀 Ajukan Pengujian Mutu (Bulk)
                   </button>
                   <button
                     type="button"
-                    onClick={handleBulkDeleteDrafts}
+                    onClick={() => {
+                      askConfirmation(
+                        `Apakah Anda yakin ingin menghapus ${selectedDraftRegs.length} draft terpilih?`,
+                        handleBulkDeleteDrafts
+                      );
+                    }}
                     className="bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs px-3.5 py-2 rounded-lg shadow cursor-pointer transition-colors"
                   >
                     🗑️ Hapus Permanen (Bulk)
@@ -4621,7 +4860,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                             {/* delete button for redundant/incorrect entries - Requirement 6 */}
                             {canUji && (
                               <button
-                                onClick={() => handleDeleteRegistration(reg.id)}
+                                onClick={() => {
+                                  askConfirmation(
+                                    "Apakah Anda yakin ingin menghapus draft registrasi ini dari antrean?",
+                                    () => handleDeleteRegistration(reg.id)
+                                  );
+                                }}
                                 className="bg-red-50 hover:bg-red-100 text-red-600 font-bold py-1.5 px-2.5 rounded-lg flex items-center gap-1 transition-all cursor-pointer border border-red-200"
                                 title="Hapus draf salah input"
                               >
@@ -6238,9 +6482,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      if (confirm("Apakah Anda yakin ingin mengosongkan seluruh database hasil spectrometer terimpor?")) {
-                                        setImportedCsvRows([]);
-                                      }
+                                      askConfirmation(
+                                        "Apakah Anda yakin ingin mengosongkan seluruh database hasil spectrometer terimpor?",
+                                        () => {
+                                          setImportedCsvRows([]);
+                                        }
+                                      );
                                     }}
                                     className="text-rose-600 hover:text-rose-800 font-bold text-[10px] bg-white border border-rose-250 hover:bg-rose-50 px-2.5 py-1 rounded transition-all cursor-pointer"
                                   >
@@ -6415,9 +6662,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                           <button
                             type="button"
                             onClick={() => {
-                              if (confirm("Apakah Anda yakin ingin menghapus seluruh database PMI dalam memori ini?")) {
-                                setImportedCsvRows([]);
-                              }
+                              askConfirmation(
+                                "Apakah Anda yakin ingin menghapus seluruh database PMI dalam memori ini?",
+                                () => {
+                                  setImportedCsvRows([]);
+                                }
+                              );
                             }}
                             className="text-rose-600 hover:text-rose-800 font-extrabold text-[10px] transition-colors hover:underline cursor-pointer bg-white border border-slate-200 px-2 py-0.5 rounded"
                           >
@@ -6530,9 +6780,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                                           onClick={(e) => {
                                             e.preventDefault();
                                             e.stopPropagation();
-                                            if (confirm("Hapus baris ini dari database?")) {
-                                              setImportedCsvRows(prev => prev.filter(r => r.id !== row.id));
-                                            }
+                                            askConfirmation(
+                                              "Hapus baris ini dari database?",
+                                              () => {
+                                                setImportedCsvRows(prev => prev.filter(r => r.id !== row.id));
+                                              }
+                                            );
                                           }}
                                           className="text-rose-650 hover:text-rose-800 font-extrabold text-[9px] cursor-pointer"
                                           title="Hapus baris ini dari database"
@@ -6611,14 +6864,28 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                   </span>
                   <button
                     type="button"
-                    onClick={() => handleBulkReviewApprove(true)}
+                    onClick={() => {
+                      askConfirmation(
+                        `Yakin ingin menyetujui & menerbitkan sertifikat untuk ${selectedReviewRegs.length} antrean terpilih?`,
+                        () => handleBulkReviewApprove(true)
+                      );
+                    }}
                     className="bg-[#006A4E] hover:bg-emerald-800 text-white font-extrabold text-xs px-3.5 py-2 rounded-lg shadow cursor-pointer transition-colors"
                   >
                     🏆 Setujui & Terbitkan Semua (Bulk)
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleBulkReviewApprove(false)}
+                    onClick={() => {
+                      if (!reviewComments.trim()) {
+                        alert("Wajib mengetikkan Keterangan / Alasan Bulk terlebih dahulu di kolom input sebelum menolak antrean terpilih!");
+                        return;
+                      }
+                      askConfirmation(
+                        `Yakin ingin menolak kembali ke draft untuk ${selectedReviewRegs.length} antrean terpilih?`,
+                        () => handleBulkReviewApprove(false)
+                      );
+                    }}
                     className="bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs px-3.5 py-2 rounded-lg shadow cursor-pointer transition-colors"
                   >
                     ❌ Tolak & Kembalikan ke Draft
@@ -6654,6 +6921,9 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                       <th className="p-3 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSortReview("noReg")}>
                         No Reg {renderSortIndicator("noReg", reviewSortKey, reviewSortDir)}
                       </th>
+                      <th className="p-3 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSortReview("ppjCode")}>
+                        No PPJ {renderSortIndicator("ppjCode", reviewSortKey, reviewSortDir)}
+                      </th>
                       <th className="p-3 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSortReview("itemName")}>
                         Nama Barang / Deskripsi {renderSortIndicator("itemName", reviewSortKey, reviewSortDir)}
                       </th>
@@ -6661,7 +6931,10 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                         PO & Vendor {renderSortIndicator("vendor", reviewSortKey, reviewSortDir)}
                       </th>
                       <th className="p-3 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSortReview("pengujiInitials")}>
-                        Penguji / Tanggal {renderSortIndicator("pengujiInitials", reviewSortKey, reviewSortDir)}
+                        Penguji {renderSortIndicator("pengujiInitials", reviewSortKey, reviewSortDir)}
+                      </th>
+                      <th className="p-3 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSortReview("tanggalDiuji")}>
+                        Tanggal {renderSortIndicator("tanggalDiuji", reviewSortKey, reviewSortDir)}
                       </th>
                       <th className="p-3">Tindakan Keputusan</th>
                     </tr>
@@ -6684,6 +6957,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                           />
                         </td>
                         <td className="p-3 font-mono font-bold text-slate-800">#{reg.noReg}</td>
+                        <td className="p-3 font-semibold text-slate-700 bg-slate-50/20">{reg.ppjCode}</td>
                         <td className="p-3 max-w-[340px]">
                           <div className="font-extrabold text-slate-900 uppercase leading-snug">{reg.itemName}</div>
                           <div className="text-[10px] text-[#006A4E] font-extrabold mt-1">Standard: {reg.standardName}</div>
@@ -6745,9 +7019,11 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                           <strong className="text-slate-700">{reg.vendor}</strong><br/>
                           PO: {reg.poCode}
                         </td>
-                        <td className="p-3 text-xs">
-                          Inisial: <strong className="font-bold text-slate-900">{reg.pengujiInitials}</strong> <br/>
-                          Tgl diuji: {reg.tanggalDiuji}
+                        <td className="p-3 text-xs font-bold text-slate-900">
+                          {reg.pengujiInitials}
+                        </td>
+                        <td className="p-3 text-xs font-semibold text-slate-600">
+                          {reg.tanggalDiuji}
                         </td>
                         <td className="p-3">
                           {canReview ? (
@@ -7220,10 +7496,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
           }).sort((a, b) => b.total - a.total);
 
           // Compute trend stats based on filteredRegsForAnalisa
+          // Determine if we should show daily (harian) detailed view (Requirement 3)
+          const isDailyTrend = analisaFilterMonth !== "All" || analisaFilterStartDate !== "" || analisaFilterEndDate !== "";
+
           const trendStatsByMonthFiltered: { [key: string]: { monthName: string, total: number, onspec: number, offspec: number, draft: number } } = {};
           
           filteredRegsForAnalisa.forEach(r => {
-            let monthKey = "2026-04"; // Fallback
             const dVal = (
               analisaFilterDateType === "terbit" 
                 ? (r.tanggalTerbit || r.tanggalDiuji || "") 
@@ -7232,24 +7510,41 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                     : r.tanggalPPJ)
             ) || "";
 
+            let key = "2026-04"; // Fallback
+            let displayName = "April 2026";
+
             if (dVal && dVal.includes("-")) {
               const parts = dVal.split("-");
-              if (parts[0] && parts[1]) {
-                monthKey = `${parts[0]}-${parts[1]}`;
+              if (parts.length >= 2) {
+                const year = parts[0];
+                const month = parts[1];
+                const day = parts[2] || "";
+
+                if (isDailyTrend) {
+                  // Group by YYYY-MM-DD
+                  key = dVal;
+                  const monthNamesIndo: { [key: string]: string } = {
+                    "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "Mei", "06": "Jun",
+                    "07": "Jul", "08": "Agu", "09": "Sep", "10": "Okt", "11": "Nov", "12": "Des"
+                  };
+                  const mName = monthNamesIndo[month] || month;
+                  displayName = day ? `${parseInt(day, 10)} ${mName}` : `${mName} ${year}`;
+                } else {
+                  // Group by YYYY-MM
+                  key = `${year}-${month}`;
+                  const monthNamesIndo: { [key: string]: string } = {
+                    "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "Mei", "06": "Jun",
+                    "07": "Jul", "08": "Agu", "09": "Sep", "10": "Okt", "11": "Nov", "12": "Des"
+                  };
+                  const mName = monthNamesIndo[month] || month;
+                  displayName = `${mName} ${year}`;
+                }
               }
             }
             
-            if (!trendStatsByMonthFiltered[monthKey]) {
-              const monthNamesIndo: { [key: string]: string } = {
-                "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "Mei", "06": "Jun",
-                "07": "Jul", "08": "Agu", "09": "Sep", "10": "Okt", "11": "Nov", "12": "Des"
-              };
-              const parts = monthKey.split("-");
-              const year = parts[0] || "2026";
-              const month = parts[1] || "04";
-              const mName = monthNamesIndo[month] || month;
-              trendStatsByMonthFiltered[monthKey] = {
-                monthName: `${mName} ${year}`,
+            if (!trendStatsByMonthFiltered[key]) {
+              trendStatsByMonthFiltered[key] = {
+                monthName: displayName,
                 total: 0,
                 onspec: 0,
                 offspec: 0,
@@ -7257,14 +7552,14 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
               };
             }
             
-            trendStatsByMonthFiltered[monthKey].total += 1;
+            trendStatsByMonthFiltered[key].total += 1;
             const spec = getRegSpecStatus(r);
             if (spec === "onspec") {
-              trendStatsByMonthFiltered[monthKey].onspec += 1;
+              trendStatsByMonthFiltered[key].onspec += 1;
             } else if (spec === "offspec") {
-              trendStatsByMonthFiltered[monthKey].offspec += 1;
+              trendStatsByMonthFiltered[key].offspec += 1;
             } else {
-              trendStatsByMonthFiltered[monthKey].draft += 1;
+              trendStatsByMonthFiltered[key].draft += 1;
             }
           });
 
@@ -7709,9 +8004,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                           alert("File tidak berisi data standard acuan yang cocok.");
                           return;
                         }
-                        if (confirm(`Sistem mendeteksi ${parsedList.length} standard mutu mandiri di dalam dokumen ${file.name}. Teruskan impor data standard tersebut ke server?`)) {
-                          handleBulkImportStandards(parsedList);
-                        }
+                        askConfirmation(
+                          `Sistem mendeteksi ${parsedList.length} standard mutu mandiri di dalam dokumen ${file.name}. Teruskan impor data standard tersebut ke server?`,
+                          () => {
+                            handleBulkImportStandards(parsedList);
+                          }
+                        );
                       } catch (err: any) {
                         alert("Gagal mem-parsing berkas excel: " + err.message);
                       }
@@ -8178,7 +8476,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                             </button>
                             <button
                               type="button"
-                              onClick={() => handleDeleteSignature(sig.id)}
+                              onClick={() => {
+                                askConfirmation(
+                                  "Apakah Anda yakin ingin menghapus pejabat penandatangan ini?",
+                                  () => handleDeleteSignature(sig.id)
+                                );
+                              }}
                               className="text-rose-600 hover:text-rose-800 font-extrabold text-[10px] bg-rose-50 px-2 py-1 rounded-lg border border-rose-100 hover:bg-rose-100 transition-colors cursor-pointer"
                             >
                               Hapus
@@ -8360,7 +8663,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                             </button>
                             <button
                               type="button"
-                              onClick={() => handleDeleteStandard(std.id)}
+                              onClick={() => {
+                                askConfirmation(
+                                  "Apakah Anda yakin ingin menghapus standard acuan ini?",
+                                  () => handleDeleteStandard(std.id)
+                                );
+                              }}
                               className="text-rose-600 hover:text-rose-800 font-extrabold text-[11px] bg-rose-50 px-2 py-1 rounded-lg border border-rose-100 hover:bg-rose-100 transition-colors cursor-pointer"
                             >
                               Hapus
@@ -8477,6 +8785,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                       <th className="p-3 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSortArsip("itemName")}>
                         Nama Barang {renderSortIndicator("itemName", arsipSortKey, arsipSortDir)}
                       </th>
+                      <th className="p-3 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSortArsip("pengujiInitials")}>
+                        Penguji {renderSortIndicator("pengujiInitials", arsipSortKey, arsipSortDir)}
+                      </th>
+                      <th className="p-3 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSortArsip("tanggalDiuji")}>
+                        Tanggal {renderSortIndicator("tanggalDiuji", arsipSortKey, arsipSortDir)}
+                      </th>
                       <th className="p-3">Raw Parameter Terpola</th>
                     </tr>
                   </thead>
@@ -8514,6 +8828,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                         <td className="p-3">
                           <strong className="block text-slate-900 uppercase font-extrabold">{reg.itemName}</strong>
                           <span className="text-slate-400 text-[10px]">Cat: {reg.category} / Standard: {reg.standardName}</span>
+                        </td>
+                        <td className="p-3 font-bold text-slate-700">
+                          {reg.pengujiInitials || <span className="text-slate-300 italic font-normal">-</span>}
+                        </td>
+                        <td className="p-3 font-mono text-slate-600">
+                          {reg.tanggalDiuji || <span className="text-slate-300 italic">-</span>}
                         </td>
                         <td className="p-3 font-mono text-[10px] text-indigo-950 max-w-[320px] truncate" title={JSON.stringify(reg.results)}>
                           {reg.results.length > 0 ? (
@@ -8945,12 +9265,18 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
                 <div className="space-y-1">
                   <label className="font-bold text-slate-600 block">Nama Barang / Deskripsi<span className="text-red-500">*</span></label>
-                  <AutoComplete 
-                    placeholder="Contoh: ELBOW 8IN, BOLT, PHONSKA"
-                    value={editItemName}
-                    onChange={(val) => setEditItemName(val)}
-                    options={Array.from(new Set(registrations.filter(r => r.category === editCategory).map(r => r.itemName).filter(Boolean)))}
-                  />
+                  {editCategory === "karung" ? (
+                    <div className="p-2 border rounded-lg bg-indigo-50 border-indigo-200 text-indigo-900 font-extrabold text-xs uppercase select-none min-h-[38px] flex items-center shadow-sm">
+                      {editItemName || "NAMA DEFAULT ACUAN (Otomatis dari Standard)"}
+                    </div>
+                  ) : (
+                    <AutoComplete 
+                      placeholder="Contoh: ELBOW 8IN, BOLT, PHONSKA"
+                      value={editItemName}
+                      onChange={(val) => setEditItemName(val)}
+                      options={Array.from(new Set(registrations.filter(r => r.category === editCategory).map(r => r.itemName).filter(Boolean)))}
+                    />
+                  )}
                 </div>
 
                 <div className="space-y-1">
@@ -8965,37 +9291,82 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t pt-3">
-                {editCategory === "logam" ? (
+                {editCategory === "karung" ? (
+                  <div className="space-y-1 md:col-span-2">
+                    <label className="font-bold text-slate-700 block bg-slate-100 px-2 py-0.5 rounded inline-block text-xs">Katalog Standard Mutu <span className="text-red-500">*</span></label>
+                    <select
+                      required
+                      value={editStandardName}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditStandardName(val);
+                        const found = standards.find(s => s.category === "karung" && s.name === val);
+                        if (found) {
+                          setEditStandardSource(found.source || "KSM INTERNAL");
+                          setEditItemName(found.defaultNamaKarung || found.name);
+                        } else {
+                          setEditItemName("");
+                        }
+                      }}
+                      className="w-full text-xs border border-indigo-300 rounded-lg px-3 py-2 bg-white text-slate-800 font-extrabold focus:outline-indigo-500 transition-all shadow-sm"
+                    >
+                      <option value="">-- Pilih Acuan Karung Master --</option>
+                      {standards
+                        .filter(s => s.category === "karung")
+                        .map(s => (
+                          <option key={s.name} value={s.name}>
+                            {s.name}
+                          </option>
+                        ))
+                      }
+                    </select>
+                  </div>
+                ) : editCategory === "logam" ? (
                   <>
                     <div className="space-y-1">
                       <label className="font-bold text-slate-700 block bg-slate-100 px-2 py-0.5 rounded inline-block">1. Pilih Acuan Standard Logam <span className="text-red-500">*</span></label>
-                      <AutoComplete 
-                        placeholder="Ketik Acuan Standard..."
+                      <select
+                        required
                         value={editMetalAcuan}
-                        onChange={(val) => {
+                        onChange={(e) => {
+                          const val = e.target.value;
                           setEditMetalAcuan(val);
                           setEditStandardName("");
                           setEditStandardSource("");
                         }}
-                        options={Array.from(new Set(standards.filter(s => s.category === "logam").map(s => s.source).filter(Boolean)))}
-                      />
+                        className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white text-slate-800 font-extrabold focus:outline-emerald-600 focus:ring-1 focus:ring-emerald-500"
+                      >
+                        <option value="">-- Pilih Acuan Logam --</option>
+                        {Array.from(new Set(standards.filter(s => s.category === "logam").map(s => s.source).filter(Boolean))).sort().map(src => (
+                          <option key={src} value={src}>{src}</option>
+                        ))}
+                      </select>
                     </div>
 
                     <div className="space-y-1">
-                      <label className="font-bold text-slate-700 block bg-slate-100 px-2 py-0.5 rounded inline-block">2. Cari Standard Grade Logam <span className="text-red-500">*</span></label>
-                      <AutoComplete 
+                      <label className="font-bold text-slate-700 block bg-slate-100 px-2 py-0.5 rounded inline-block">2. Pilih Standard Grade Logam <span className="text-red-500">*</span></label>
+                      <select
+                        required
                         disabled={!editMetalAcuan}
-                        placeholder={editMetalAcuan ? "Cari grade logam..." : "⚠️ Pilih Acuan Dulu"}
                         value={editStandardName}
-                        onChange={(val) => {
+                        onChange={(e) => {
+                          const val = e.target.value;
                           setEditStandardName(val);
                           const found = standards.find(s => s.category === "logam" && s.source === editMetalAcuan && s.name === val);
                           if (found) {
                             setEditStandardSource(found.source);
                           }
                         }}
-                        options={standards.filter(s => s.category === "logam" && s.source === editMetalAcuan).map(s => s.name)}
-                      />
+                        className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white text-slate-800 font-extrabold focus:outline-emerald-600 focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-400"
+                      >
+                        <option value="">-- Pilih Grade Logam --</option>
+                        {standards
+                          .filter(s => s.category === "logam" && s.source === editMetalAcuan)
+                          .map(s => (
+                            <option key={s.name} value={s.name}>{s.name}</option>
+                          ))
+                        }
+                      </select>
                     </div>
 
                     {editMetalAcuan && (
@@ -9525,6 +9896,49 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
           );
         })}
       </div>
+
+      {/* High-Fidelity Custom Confirmation Modal Overlay (Requirement 1 - replaces blocked window.confirm) */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white border border-slate-200 shadow-2xl rounded-2xl w-full max-w-md overflow-hidden transform scale-100 transition-all">
+            <div className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                  <span className="text-xl font-bold">⚠️</span>
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-black text-slate-900">Konfirmasi Tindakan</h4>
+                  <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                    {confirmModal.message}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-slate-50 px-6 py-3.5 flex justify-end gap-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirmModal.onCancel) confirmModal.onCancel();
+                  setConfirmModal(null);
+                }}
+                className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-700 font-extrabold text-xs rounded-lg transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  confirmModal.onConfirm();
+                  setConfirmModal(null);
+                }}
+                className="px-5 py-2 bg-[#006A4E] hover:bg-emerald-800 text-white font-black text-xs rounded-lg shadow-md hover:shadow transition-all cursor-pointer"
+              >
+                Ya, Setujui
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

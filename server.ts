@@ -10,7 +10,7 @@ import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc } from "fireb
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 app.use(express.json({ limit: "50mb" }));
 
@@ -824,11 +824,11 @@ function loadDb() {
   return dbData;
 }
 
-function saveDb(data: any) {
+async function saveDb(data: any) {
   try {
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
     if (firestoreDb) {
-      syncFirestoreData(data).catch(err => console.error("Firestore saveDb sync error:", err));
+      await syncFirestoreData(data);
     }
   } catch (err) {
     console.error("Error saving database file:", err);
@@ -945,7 +945,12 @@ app.post("/api/firebase/force-sync", async (req, res) => {
   }
 });
 
-app.get("/api/all-data", (req, res) => {
+app.get("/api/all-data", async (req, res) => {
+  try {
+    await syncDbFromFirestore();
+  } catch (err) {
+    console.error("Error syncing from Firestore on /api/all-data:", err);
+  }
   const dbData = loadDb();
   res.json(dbData);
 });
@@ -963,7 +968,7 @@ app.post("/api/auth/login", (req, res) => {
   }
 });
 
-app.post("/api/users/update", (req, res) => {
+app.post("/api/users/update", async (req, res) => {
   const { username, password, name, initials } = req.body;
   const dbData = loadDb();
   const userIdx = dbData.users.findIndex((u: any) => u.username === username);
@@ -971,14 +976,14 @@ app.post("/api/users/update", (req, res) => {
     if (password) dbData.users[userIdx].password = password;
     if (name) dbData.users[userIdx].name = name;
     if (initials) dbData.users[userIdx].initials = initials;
-    saveDb(dbData);
+    await saveDb(dbData);
     res.json({ success: true, user: dbData.users[userIdx] });
   } else {
     res.status(404).json({ success: false, message: "User tidak ditemukan." });
   }
 });
 
-app.post("/api/users/add", (req, res) => {
+app.post("/api/users/add", async (req, res) => {
   const { username, password, name, initials, role } = req.body;
   const dbData = loadDb();
   if (dbData.users.some((u: any) => u.username === username)) {
@@ -986,7 +991,7 @@ app.post("/api/users/add", (req, res) => {
   }
   const newUser = { username, password, name, initials, role };
   dbData.users.push(newUser);
-  saveDb(dbData);
+  await saveDb(dbData);
   res.json({ success: true, user: newUser });
 });
 
@@ -1054,7 +1059,7 @@ function getNextNoSurat(dbData: any, targetYear: string): string {
   return String(nextSeq).padStart(4, "0");
 }
 
-app.post("/api/registrations", (req, res) => {
+app.post("/api/registrations", async (req, res) => {
   const dbData = loadDb();
   const reg = req.body;
   
@@ -1091,11 +1096,11 @@ app.post("/api/registrations", (req, res) => {
   };
   
   dbData.registrations.push(finalReg);
-  saveDb(dbData);
+  await saveDb(dbData);
   res.json({ success: true, registration: finalReg });
 });
 
-app.post("/api/registrations/edit", (req, res) => {
+app.post("/api/registrations/edit", async (req, res) => {
   const { id, ppjCode, prCode, poCode, vendor, category, itemName, description, quantity, points, standardName, standardSource, tanggalPPJ, tanggalDiterima, platNomor, isNewVendorFlag, ballCount, sheetCount } = req.body;
   const dbData = loadDb();
   const idx = dbData.registrations.findIndex((r: any) => r.id === id);
@@ -1134,14 +1139,14 @@ app.post("/api/registrations/edit", (req, res) => {
     if (ballCount !== undefined) reg.ballCount = ballCount;
     if (sheetCount !== undefined) reg.sheetCount = sheetCount;
 
-    saveDb(dbData);
+    await saveDb(dbData);
     res.json({ success: true, registration: reg });
   } else {
     res.status(404).json({ success: false, message: "Registrasi tidak ditemukan." });
   }
 });
 
-app.post("/api/registrations/delete", (req, res) => {
+app.post("/api/registrations/delete", async (req, res) => {
   const { id } = req.body;
   const dbData = loadDb();
   const idx = dbData.registrations.findIndex((r: any) => r.id === id);
@@ -1151,7 +1156,7 @@ app.post("/api/registrations/delete", (req, res) => {
       return res.status(400).json({ success: false, message: "Registrasi yang sudah Terbit tidak dapat dihapus." });
     }
     dbData.registrations.splice(idx, 1);
-    saveDb(dbData);
+    await saveDb(dbData);
     res.json({ success: true });
   } else {
     res.status(404).json({ success: false, message: "Registrasi tidak ditemukan." });
@@ -1159,7 +1164,7 @@ app.post("/api/registrations/delete", (req, res) => {
 });
 
 // Batch registration (manual parsing lists or pasted Excel sheets)
-app.post("/api/registrations/batch", (req, res) => {
+app.post("/api/registrations/batch", async (req, res) => {
   const dbData = loadDb();
   const { items } = req.body;
   const inserted: any[] = [];
@@ -1198,7 +1203,7 @@ app.post("/api/registrations/batch", (req, res) => {
     inserted.push(finalReg);
   }
   
-  saveDb(dbData);
+  await saveDb(dbData);
   res.json({ success: true, count: inserted.length, items: inserted });
 });
 
@@ -1422,10 +1427,9 @@ async function generateContentWithFallback(ai: any, params: {
 }) {
   const models = [
     "gemini-2.5-flash",
-    "gemini-2.5-pro",
     "gemini-1.5-flash",
-    "gemini-1.5-pro",
-    "gemini-3.5-flash"
+    "gemini-2.5-pro",
+    "gemini-1.5-pro"
   ];
   
   let lastError: any = null;
@@ -1603,15 +1607,45 @@ app.post("/api/gemini/parse", async (req, res) => {
       const standardVendor = item.vendor.trim().toUpperCase();
       const isExist = registeredVendors.has(standardVendor);
       
-      // Let's also do "default nama karung" override on the server if database standard exists
-      if (item.category === "karung" || item.category === "benang") {
-        const matchedStd = dbData.standards.find((s: any) => 
-          s.category === item.category && 
-          (s.name.toLowerCase().includes(item.itemName.toLowerCase()) || 
-           item.itemName.toLowerCase().includes(s.name.toLowerCase()))
-        );
-        if (matchedStd && matchedStd.defaultNamaKarung) {
-          item.itemName = matchedStd.defaultNamaKarung;
+      // Let's enforce standard acuan matching & default name override for karung category
+      if (item.category === "karung") {
+        const karungStds = dbData.standards.filter((s: any) => s.category === "karung");
+        const scannedName = (item.itemName || item.standardName || "").toLowerCase();
+        let matchedStd = null;
+        
+        if (scannedName.includes("phonska") || scannedName.includes("npk")) {
+          matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("phonska"));
+        } else if (scannedName.includes("urea")) {
+          matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("urea"));
+        } else if (scannedName.includes("nitrea")) {
+          matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("nitrea"));
+        } else if (scannedName.includes("za")) {
+          matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("za"));
+        }
+        
+        if (!matchedStd) {
+          let maxScore = 0;
+          for (const std of karungStds) {
+            const stdName = std.name.toLowerCase();
+            const defaultName = (std.defaultNamaKarung || "").toLowerCase();
+            let score = 0;
+            if (scannedName.includes(stdName) || stdName.includes(scannedName)) score += 5;
+            if (defaultName && (scannedName.includes(defaultName) || defaultName.includes(scannedName))) score += 5;
+            if (score > maxScore) {
+              maxScore = score;
+              matchedStd = std;
+            }
+          }
+        }
+        
+        if (!matchedStd && karungStds.length > 0) {
+          matchedStd = karungStds[0];
+        }
+        
+        if (matchedStd) {
+          item.standardName = matchedStd.name;
+          item.standardSource = matchedStd.source || "KSM INTERNAL";
+          item.itemName = matchedStd.defaultNamaKarung || matchedStd.name;
         }
       }
 
@@ -1701,8 +1735,7 @@ Output structured JSON list matching the schema under Type.ARRAY.`
       
       const parsedList = JSON.parse(response.text || "[]");
       
-      // Inject isNewVendorFlag & defaultNamaKarung lookup dynamically on the server from DB
-      const enrichedList = parsedList.map((item: any) => {
+      const enrichParsedItem = (item: any) => {
         if (item.vendor) {
           const upperVendor = item.vendor.trim().toUpperCase();
           const isExist = registeredVendors.has(upperVendor);
@@ -1711,20 +1744,51 @@ Output structured JSON list matching the schema under Type.ARRAY.`
           item.isNewVendorFlag = false;
         }
 
-        if (item.category === "karung" || item.category === "benang") {
-          const matchedStd = dbData.standards.find((s: any) => 
-            s.category === item.category && 
-            (s.name.toLowerCase().includes(item.itemName.toLowerCase()) || 
-             item.itemName.toLowerCase().includes(s.name.toLowerCase()))
-          );
-          if (matchedStd && matchedStd.defaultNamaKarung) {
-            item.itemName = matchedStd.defaultNamaKarung;
+        if (item.category === "karung") {
+          const karungStds = dbData.standards.filter((s: any) => s.category === "karung");
+          const scannedName = (item.itemName || item.standardName || "").toLowerCase();
+          let matchedStd = null;
+          
+          if (scannedName.includes("phonska") || scannedName.includes("npk")) {
+            matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("phonska"));
+          } else if (scannedName.includes("urea")) {
+            matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("urea"));
+          } else if (scannedName.includes("nitrea")) {
+            matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("nitrea"));
+          } else if (scannedName.includes("za")) {
+            matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("za"));
+          }
+          
+          if (!matchedStd) {
+            let maxScore = 0;
+            for (const std of karungStds) {
+              const stdName = std.name.toLowerCase();
+              const defaultName = (std.defaultNamaKarung || "").toLowerCase();
+              let score = 0;
+              if (scannedName.includes(stdName) || stdName.includes(scannedName)) score += 5;
+              if (defaultName && (scannedName.includes(defaultName) || defaultName.includes(scannedName))) score += 5;
+              if (score > maxScore) {
+                maxScore = score;
+                matchedStd = std;
+              }
+            }
+          }
+          
+          if (!matchedStd && karungStds.length > 0) {
+            matchedStd = karungStds[0];
+          }
+          
+          if (matchedStd) {
+            item.standardName = matchedStd.name;
+            item.standardSource = matchedStd.source || "KSM INTERNAL";
+            item.itemName = matchedStd.defaultNamaKarung || matchedStd.name;
           }
         }
 
         return item;
-      });
+      };
 
+      const enrichedList = parsedList.map(enrichParsedItem);
       return res.json({ success: true, parsed: enrichedList });
     } else {
       // Text prompt analysis
@@ -1737,7 +1801,7 @@ Output structured JSON list matching the schema under Type.ARRAY.`
       });
       const parsedList = JSON.parse(response.text || "[]");
       
-      const enrichedList = parsedList.map((item: any) => {
+      const enrichParsedItem = (item: any) => {
         if (item.vendor) {
           const upperVendor = item.vendor.trim().toUpperCase();
           const isExist = registeredVendors.has(upperVendor);
@@ -1745,9 +1809,52 @@ Output structured JSON list matching the schema under Type.ARRAY.`
         } else {
           item.isNewVendorFlag = false;
         }
-        return item;
-      });
 
+        if (item.category === "karung") {
+          const karungStds = dbData.standards.filter((s: any) => s.category === "karung");
+          const scannedName = (item.itemName || item.standardName || "").toLowerCase();
+          let matchedStd = null;
+          
+          if (scannedName.includes("phonska") || scannedName.includes("npk")) {
+            matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("phonska"));
+          } else if (scannedName.includes("urea")) {
+            matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("urea"));
+          } else if (scannedName.includes("nitrea")) {
+            matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("nitrea"));
+          } else if (scannedName.includes("za")) {
+            matchedStd = karungStds.find((s: any) => s.name.toLowerCase().includes("za"));
+          }
+          
+          if (!matchedStd) {
+            let maxScore = 0;
+            for (const std of karungStds) {
+              const stdName = std.name.toLowerCase();
+              const defaultName = (std.defaultNamaKarung || "").toLowerCase();
+              let score = 0;
+              if (scannedName.includes(stdName) || stdName.includes(scannedName)) score += 5;
+              if (defaultName && (scannedName.includes(defaultName) || defaultName.includes(scannedName))) score += 5;
+              if (score > maxScore) {
+                maxScore = score;
+                matchedStd = std;
+              }
+            }
+          }
+          
+          if (!matchedStd && karungStds.length > 0) {
+            matchedStd = karungStds[0];
+          }
+          
+          if (matchedStd) {
+            item.standardName = matchedStd.name;
+            item.standardSource = matchedStd.source || "KSM INTERNAL";
+            item.itemName = matchedStd.defaultNamaKarung || matchedStd.name;
+          }
+        }
+
+        return item;
+      };
+
+      const enrichedList = parsedList.map(enrichParsedItem);
       return res.json({ success: true, parsed: enrichedList });
     }
   } catch (error: any) {
