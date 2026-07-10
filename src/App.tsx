@@ -6,6 +6,8 @@ import RequestTest from "./components/RequestTest";
 import LoginView from "./components/LoginView";
 import DashboardITRK from "./components/DashboardITRK";
 import { ShieldCheck, MonitorPlay, Sparkles, LogIn, Award, Building, Activity, ShieldAlert, Cpu } from "lucide-react";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "./firebase";
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<"portal" | "monitor" | "validation" | "request" | "login" | "dashboard">("portal");
@@ -27,11 +29,68 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/all-data");
-      const data = await res.json();
-      setAllData(data);
+      console.log("Mencoba mengambil data langsung dari Cloud Firestore...");
+      const registrationsSnap = await getDocs(collection(db, "registrations"));
+      const standardsSnap = await getDocs(collection(db, "standards"));
+      const signaturesSnap = await getDocs(collection(db, "signatures"));
+      const usersSnap = await getDocs(collection(db, "users"));
+
+      const registrationsList: Registration[] = [];
+      registrationsSnap.forEach((doc) => {
+        registrationsList.push(doc.data() as Registration);
+      });
+
+      const standardsList: Standard[] = [];
+      standardsSnap.forEach((doc) => {
+        standardsList.push(doc.data() as Standard);
+      });
+
+      const signaturesList: Signature[] = [];
+      signaturesSnap.forEach((doc) => {
+        signaturesList.push(doc.data() as Signature);
+      });
+
+      const usersList: any[] = [];
+      usersSnap.forEach((doc) => {
+        usersList.push(doc.data());
+      });
+
+      // Sort registrations by registration number or date for a better UX
+      registrationsList.sort((a, b) => {
+        const numA = parseInt(a.noReg?.split("/").pop() || "0");
+        const numB = parseInt(b.noReg?.split("/").pop() || "0");
+        return numB - numA;
+      });
+
+      // If we got empty lists, fall back to check if local server has seeded data
+      if (registrationsList.length === 0 && standardsList.length === 0) {
+        console.warn("Firestore collection kosong atau belum terisi. Mengaktifkan fallback...");
+        throw new Error("Empty collections");
+      }
+
+      setAllData({
+        registrations: registrationsList,
+        standards: standardsList,
+        signatures: signaturesList,
+        users: usersList
+      });
+      console.log("Berhasil memuat data langsung dari Cloud Firestore!");
     } catch (err) {
-      console.error("Gagal sinkronisasi basis data ITRK:", err);
+      console.warn("Gagal mengambil data langsung dari Cloud Firestore (kemungkinan masalah rules/permissions pada custom database ID):", err);
+      // Fallback ke server lokal jika aktif (untuk kelancaran preview di AI Studio)
+      try {
+        console.log("Mencoba mengambil data cadangan dari server backend lokal...");
+        const res = await fetch("/api/all-data");
+        if (res.ok) {
+          const data = await res.json();
+          setAllData(data);
+          console.log("Berhasil memuat data dari server backend lokal!");
+        } else {
+          throw new Error("HTTP error " + res.status);
+        }
+      } catch (fallbackErr) {
+        console.error("Gagal mengambil data cadangan dari server lokal:", fallbackErr);
+      }
     } finally {
       setLoading(false);
     }

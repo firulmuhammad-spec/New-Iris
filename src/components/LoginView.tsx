@@ -1,5 +1,8 @@
 import React, { useState } from "react";
 import { User, ShieldAlert, KeyRound, Loader2, ShieldCheck } from "lucide-react";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { collection, query, where, getDocs } from "firebase/firestore";
+import { auth, db } from "../firebase";
 
 interface LoginViewProps {
   onLoginSuccess: (user: { username: string; role: "SuperAdmin" | "Tim Penguji" | "Tim Reviewer"; name: string; initials: string }) => void;
@@ -22,19 +25,81 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps) {
     setErrorMessage("");
 
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password })
-      });
-      const data = await res.json();
-      if (data.success) {
-        onLoginSuccess(data.user);
-      } else {
-        setErrorMessage(data.message || "Username atau password salah.");
+      // If the user inputs a simple local username, append @iris.com to make it a valid email for Firebase Auth
+      const email = username.includes("@") ? username : `${username}@iris.com`;
+      
+      // Call official Firebase SDK Authentication
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const fbUser = userCredential.user;
+
+      // Extract details and try to match with user documents in Firestore
+      let role: "SuperAdmin" | "Tim Penguji" | "Tim Reviewer" = "Tim Penguji";
+      let name = fbUser.displayName || fbUser.email?.split("@")[0] || "User ITRK";
+      let initials = name.substring(0, 2).toUpperCase();
+      let usernameVal = username;
+
+      try {
+        const usersRef = collection(db, "users");
+        const q = query(usersRef, where("username", "==", username));
+        const querySnapshot = await getDocs(q);
+        
+        if (!querySnapshot.empty) {
+          const userData = querySnapshot.docs[0].data();
+          role = userData.role || "Tim Penguji";
+          name = userData.name || name;
+          initials = userData.initials || initials;
+          usernameVal = userData.username || username;
+        } else {
+          // Fallback matching for demo logins (adm, uji, rev) if Firestore records aren't fully synchronized yet
+          if (username === "adm") {
+            role = "SuperAdmin";
+            name = "Administrator Utama";
+            initials = "ADM";
+          } else if (username === "uji") {
+            role = "Tim Penguji";
+            name = "Ragil Sulistiyo";
+            initials = "RS";
+          } else if (username === "rev") {
+            role = "Tim Reviewer";
+            name = "Budi Santoso";
+            initials = "BS";
+          }
+        }
+      } catch (dbErr) {
+        console.warn("Firestore user lookup skipped or failed, using local mapped profile:", dbErr);
+        // Direct local profile mapping for demo credentials
+        if (username === "adm") {
+          role = "SuperAdmin";
+          name = "Administrator Utama";
+          initials = "ADM";
+        } else if (username === "uji") {
+          role = "Tim Penguji";
+          name = "Ragil Sulistiyo";
+          initials = "RS";
+        } else if (username === "rev") {
+          role = "Tim Reviewer";
+          name = "Budi Santoso";
+          initials = "BS";
+        }
       }
-    } catch (err) {
-      setErrorMessage("Koneksi gagal. Pastikan server dev aktif.");
+
+      onLoginSuccess({
+        username: usernameVal,
+        role,
+        name,
+        initials
+      });
+    } catch (err: any) {
+      console.error("Firebase Auth login failed:", err);
+      let errMsg = "Gagal masuk portal. Sila periksa sambungan internet.";
+      if (err.code === "auth/invalid-credential" || err.code === "auth/user-not-found" || err.code === "auth/wrong-password") {
+        errMsg = "Username atau password salah.";
+      } else if (err.code === "auth/network-request-failed") {
+        errMsg = "Masalah koneksi jaringan. Hubungkan ke internet.";
+      } else if (err.message) {
+        errMsg = `Login gagal: ${err.message}`;
+      }
+      setErrorMessage(errMsg);
     } finally {
       setSubmitting(false);
     }
