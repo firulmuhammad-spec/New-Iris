@@ -23,8 +23,10 @@ export const auth = getAuth(app);
 // Initialize Cloud Firestore and get a reference to the service
 // Use initializeFirestore with experimentalForceLongPolling: true to ensure stable connection inside sandbox iframe environments
 const customDbId = metaEnv.VITE_FIREBASE_FIRESTORE_DATABASE_ID || "ai-studio-irisintegratedre-ea8f9c98-a2c7-4b67-bbd1-d65214dcd08c";
-export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-}, customDbId);
+const isDefaultDb = !customDbId || customDbId === "(default)";
+
+export const db = isDefaultDb
+  ? initializeFirestore(app, { experimentalForceLongPolling: true })
+  : initializeFirestore(app, { experimentalForceLongPolling: true }, customDbId);
 
 export default app;
