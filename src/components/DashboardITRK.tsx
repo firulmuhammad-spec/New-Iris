@@ -3607,99 +3607,109 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
   };
 
   // Approve review
-  const handleReviewDecision = async (regId: string, approved: boolean, overrideQrSignature?: boolean) => {
+  const handleReviewDecision = async (regId: string, approved: boolean, overrideQrSignature?: boolean, skipConfirm: boolean = false) => {
     let comment = (reviewCommentsMap[regId] || "").trim();
     if (!approved && !comment) {
       alert("Wajib mengetikkan Keterangan / Alasan terlebih dahulu pada baris laporan ini sebelum menolak / mengembalikannya ke Draft!");
       return;
     }
-    const finalUseQr = overrideQrSignature !== undefined ? overrideQrSignature : (reviewUseQrMap[regId] !== false);
-    try {
-      const reg = registrations.find(r => r.id === regId);
-      if (reg) {
-        let updatedReg = { ...reg };
 
-        if (approved) {
-          const targetYearStr = new Date().toISOString().split("T")[0].split("-")[0];
-          
-          const localGetNextNoSurat = (currentRegs: any[], targetYear: string): string => {
-            const yearRegs = currentRegs.filter((r: any) => {
-              let sYear = "";
-              if (r.tanggalTerbit) {
-                sYear = r.tanggalTerbit.split("-")[0];
-              } else if (r.tanggalPPJ) {
-                sYear = r.tanggalPPJ.split("-")[0];
-              } else {
-                sYear = new Date().getFullYear().toString();
+    const proceedWithDecision = async () => {
+      const finalUseQr = overrideQrSignature !== undefined ? overrideQrSignature : (reviewUseQrMap[regId] !== false);
+      try {
+        const reg = registrations.find(r => r.id === regId);
+        if (reg) {
+          let updatedReg = { ...reg };
+
+          if (approved) {
+            const targetYearStr = new Date().toISOString().split("T")[0].split("-")[0];
+            
+            const localGetNextNoSurat = (currentRegs: any[], targetYear: string): string => {
+              const yearRegs = currentRegs.filter((r: any) => {
+                let sYear = "";
+                if (r.tanggalTerbit) {
+                  sYear = r.tanggalTerbit.split("-")[0];
+                } else if (r.tanggalPPJ) {
+                  sYear = r.tanggalPPJ.split("-")[0];
+                } else {
+                  sYear = new Date().getFullYear().toString();
+                }
+                return r.status === "Terbit" && r.noSurat && sYear === targetYear;
+              });
+
+              if (yearRegs.length === 0) {
+                return "0001";
               }
-              return r.status === "Terbit" && r.noSurat && sYear === targetYear;
-            });
 
-            if (yearRegs.length === 0) {
-              return "0001";
-            }
-
-            let maxSeq = 0;
-            for (const r of yearRegs) {
-              if (r.noSurat) {
-                const parts = r.noSurat.split("/");
-                const firstPart = parts[0];
-                const parsed = parseInt(firstPart, 10);
-                if (!isNaN(parsed) && parsed > maxSeq) {
-                  maxSeq = parsed;
+              let maxSeq = 0;
+              for (const r of yearRegs) {
+                if (r.noSurat) {
+                  const parts = r.noSurat.split("/");
+                  const firstPart = parts[0];
+                  const parsed = parseInt(firstPart, 10);
+                  if (!isNaN(parsed) && parsed > maxSeq) {
+                    maxSeq = parsed;
+                  }
                 }
               }
-            }
 
-            const nextSeq = maxSeq + 1;
-            return String(nextSeq).padStart(4, "0");
-          };
+              const nextSeq = maxSeq + 1;
+              return String(nextSeq).padStart(4, "0");
+            };
 
-          const nextSuratSeq = localGetNextNoSurat(registrations, targetYearStr);
+            const nextSuratSeq = localGetNextNoSurat(registrations, targetYearStr);
 
-          updatedReg.status = "Terbit";
-          updatedReg.reviewerInitials = currentUser.initials;
-          updatedReg.reviewerComments = comment || "Disetujui hasil uji sesuai standard.";
-          updatedReg.tanggalTerbit = new Date().toISOString().split("T")[0];
-          updatedReg.noSurat = `${nextSuratSeq}/PR.00.02/90/MI/${targetYearStr}`;
-          updatedReg.trustCardId = `TC-${reg.noReg}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
-          updatedReg.useQrSignature = finalUseQr;
-        } else {
-          updatedReg.status = "Draft"; // Reject back to edits
-          updatedReg.reviewerComments = comment || "Ditolak - Perlu pengujian/parameter ulang.";
+            updatedReg.status = "Terbit";
+            updatedReg.reviewerInitials = currentUser.initials;
+            updatedReg.reviewerComments = comment || "Disetujui hasil uji sesuai standard.";
+            updatedReg.tanggalTerbit = new Date().toISOString().split("T")[0];
+            updatedReg.noSurat = `${nextSuratSeq}/PR.00.02/90/MI/${targetYearStr}`;
+            updatedReg.trustCardId = `TC-${reg.noReg}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+            updatedReg.useQrSignature = finalUseQr;
+          } else {
+            updatedReg.status = "Draft"; // Reject back to edits
+            updatedReg.reviewerComments = comment || "Ditolak - Perlu pengujian/parameter ulang.";
+          }
+
+          // 1. Direct client-side write to Firestore first
+          await setDoc(doc(db, "registrations", regId), updatedReg);
         }
 
-        // 1. Direct client-side write to Firestore first
-        await setDoc(doc(db, "registrations", regId), updatedReg);
-      }
+        // 2. Sync with local server database
+        try {
+          await fetch("/api/registrations/review", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: regId,
+              approved,
+              reviewerInitials: currentUser.initials,
+              comments: comment || (approved ? "Disetujui hasil uji sesuai standard." : ""),
+              useQrSignature: finalUseQr
+            })
+          });
+        } catch (syncErr) {
+          console.warn("Server-side review decision sync failed:", syncErr);
+        }
 
-      // 2. Sync with local server database
-      try {
-        await fetch("/api/registrations/review", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: regId,
-            approved,
-            reviewerInitials: currentUser.initials,
-            comments: comment || (approved ? "Disetujui hasil uji sesuai standard." : ""),
-            useQrSignature: finalUseQr
-          })
+        setReviewCommentsMap(prev => {
+          const next = { ...prev };
+          delete next[regId];
+          return next;
         });
-      } catch (syncErr) {
-        console.warn("Server-side review decision sync failed:", syncErr);
+        refreshData();
+        alert(approved ? "Sertifikat Laporan Resmi berhasil diterbitkan!" : "Laporan ditolak dan dikembalikan untuk pengujian ulang.");
+      } catch (err: any) {
+        console.error(err);
+        alert("Gagal memproses keputusan review di Firestore: " + err.message);
       }
+    };
 
-      setReviewCommentsMap(prev => {
-        const next = { ...prev };
-        delete next[regId];
-        return next;
-      });
-      refreshData();
-      alert(approved ? "Sertifikat Laporan Resmi berhasil diterbitkan!" : "Laporan ditolak dan dikembalikan untuk pengujian ulang.");
-    } catch (err: any) {
-      console.error(err);
-      alert("Gagal memproses keputusan review di Firestore: " + err.message);
+    if (skipConfirm) {
+      await proceedWithDecision();
+    } else {
+      const actionText = approved ? "menyetujui dan menerbitkan laporan pengujian ini" : "menolak dan mengembalikan laporan pengujian ini ke Draft";
+      askConfirmation(`Apakah Anda yakin ingin ${actionText}?`, proceedWithDecision);
     }
   };
 
@@ -10497,6 +10507,30 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                 Ya, Setujui
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auto-Dismissing Toast Notification Banner (Pojok Kanan Layar) */}
+      {toastMessage && (
+        <div className="fixed bottom-5 right-5 z-[99999] animate-bounce-short">
+          <div className={`
+            flex items-center gap-3 px-4.5 py-3.5 rounded-xl shadow-2xl border text-xs font-bold text-white max-w-sm transition-all duration-300
+            ${toastType === "error" ? "bg-rose-600 border-rose-500" : ""}
+            ${toastType === "success" ? "bg-emerald-600 border-emerald-500" : ""}
+            ${toastType === "info" ? "bg-indigo-600 border-indigo-500" : ""}
+          `}>
+            {toastType === "success" && <CheckCircle2 className="w-5 h-5 text-emerald-100 shrink-0" />}
+            {toastType === "error" && <AlertTriangle className="w-5 h-5 text-rose-100 shrink-0" />}
+            {toastType === "info" && <Inbox className="w-5 h-5 text-indigo-100 shrink-0" />}
+            <span className="flex-1 leading-relaxed">{toastMessage}</span>
+            <button 
+              type="button" 
+              onClick={() => setToastMessage(null)}
+              className="text-white hover:text-slate-200 font-extrabold text-sm ml-2 focus:outline-none cursor-pointer"
+            >
+              ×
+            </button>
           </div>
         </div>
       )}
