@@ -81,6 +81,25 @@ const compressAndConvertToBase64 = (file: File): Promise<string> => {
   });
 };
 
+const cleanForFirestore = (obj: any): any => {
+  if (obj === undefined) return null;
+  if (obj === null) return null;
+  if (Array.isArray(obj)) {
+    return obj.map(item => cleanForFirestore(item));
+  }
+  if (typeof obj === "object") {
+    const cleaned: any = {};
+    for (const key of Object.keys(obj)) {
+      const val = obj[key];
+      if (val !== undefined) {
+        cleaned[key] = cleanForFirestore(val);
+      }
+    }
+    return cleaned;
+  }
+  return obj;
+};
+
 interface DashboardITRKProps {
   currentUser: User;
   onLogout: () => void;
@@ -2571,7 +2590,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
       // 1. Direct client-side write to Firestore first (for each item)
       for (const item of finalItems) {
-        await setDoc(doc(db, "registrations", item.id), item);
+        await setDoc(doc(db, "registrations", item.id), cleanForFirestore(item));
       }
 
       // 2. Sync with local server database
@@ -2675,7 +2694,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
         };
 
         // 1. Direct client-side write to Firestore first
-        await setDoc(doc(db, "registrations", id), updatedReg);
+        await setDoc(doc(db, "registrations", id), cleanForFirestore(updatedReg));
 
         // 2. Sync with local server database
         try {
@@ -2772,7 +2791,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
         }
 
         // 1. Direct client-side write to Firestore first
-        await setDoc(doc(db, "registrations", id), updatedReg);
+        await setDoc(doc(db, "registrations", id), cleanForFirestore(updatedReg));
 
         // Update local list so subsequent iterations get updated No Surat values!
         const index = currentRegsList.findIndex(r => r.id === id);
@@ -2872,7 +2891,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
       };
 
       // Direct client-side write to Firestore first
-      await setDoc(doc(db, "registrations", generatedId), finalReg);
+      await setDoc(doc(db, "registrations", generatedId), cleanForFirestore(finalReg));
 
       // Sync with local server database
       try {
@@ -2970,7 +2989,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
       };
 
       // Direct client-side write to Firestore first
-      await setDoc(doc(db, "registrations", editingReg.id), updatedReg);
+      await setDoc(doc(db, "registrations", editingReg.id), cleanForFirestore(updatedReg));
 
       // Sync with local server database
       try {
@@ -3452,7 +3471,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
       };
 
       // 1. Direct client-side write to Firestore first
-      await setDoc(doc(db, "registrations", activeTesting.id), updatedReg);
+      await setDoc(doc(db, "registrations", activeTesting.id), cleanForFirestore(updatedReg));
 
       // 2. Sync with local server database
       try {
@@ -3569,7 +3588,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
         };
 
         // 1. Direct client-side write to Firestore first
-        await setDoc(doc(db, "registrations", activeTesting.id), updatedReg);
+        await setDoc(doc(db, "registrations", activeTesting.id), cleanForFirestore(updatedReg));
 
         // 2. Sync with local server database
         try {
@@ -3672,7 +3691,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
           }
 
           // 1. Direct client-side write to Firestore first
-          await setDoc(doc(db, "registrations", regId), updatedReg);
+          await setDoc(doc(db, "registrations", regId), cleanForFirestore(updatedReg));
         }
 
         // 2. Sync with local server database
@@ -3698,6 +3717,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
           return next;
         });
         refreshData();
+        setViewingReport(null);
         alert(approved ? "Sertifikat Laporan Resmi berhasil diterbitkan!" : "Laporan ditolak dan dikembalikan untuk pengujian ulang.");
       } catch (err: any) {
         console.error(err);
@@ -8782,7 +8802,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                             }
                             // Seed registrations
                             for (const reg of DEFAULT_REGISTRATIONS) {
-                              await setDoc(doc(db, "registrations", reg.id), reg);
+                              await setDoc(doc(db, "registrations", reg.id), cleanForFirestore(reg));
                             }
                             // Seed users
                             for (const user of DEFAULT_USERS) {
@@ -9712,7 +9732,6 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                             return;
                           }
                           await handleReviewDecision(viewingReport.id, false, viewingReport.useQrSignature !== false);
-                          setViewingReport(null);
                         }}
                         className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold py-2 px-3.5 rounded-lg cursor-pointer transition-all shrink-0"
                       >
@@ -9722,7 +9741,6 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                         onClick={async () => {
                           const comment = reviewCommentsMap[viewingReport.id] || "";
                           await handleReviewDecision(viewingReport.id, true, viewingReport.useQrSignature !== false);
-                          setViewingReport(null);
                         }}
                         className="bg-[#006A4E] hover:bg-emerald-800 text-white text-xs font-extrabold py-2 px-4 rounded-lg cursor-pointer flex items-center gap-1 transition-all shadow-md shrink-0"
                       >
