@@ -93,6 +93,45 @@ export const DEFAULT_STANDARDS = [
       { name: "Insulation Class", unit: "Class", spec: "F or Better" },
       { name: "IP Rating", unit: "IP", spec: "55 Min" }
     ]
+  },
+  {
+    id: "std-7",
+    category: "Valve",
+    name: "Standard Pengujian Valve",
+    source: "KSM INTERNAL",
+    description: "Standar pengujian hydrostatic & pneumatic valve",
+    parameters: [
+      { name: "Nilai Pressure", unit: "Psi", spec: "Sesuai PO" },
+      { name: "Item yang di uji", unit: "Text", spec: "Sesuai PO" },
+      { name: "sample di uji", unit: "Text", spec: "Sesuai PO" },
+      { name: "Jumlah Sample", unit: "Pcs", spec: "Sesuai PO" },
+      { name: "Jumlah Pass", unit: "Pcs", spec: "Sesuai PO" },
+      { name: "Jumlah Gagal", unit: "Pcs", spec: "0" },
+      { name: "Shell Hydrostatic Test", unit: "Status", spec: "LULUS / MEMENUHI SYARAT" },
+      { name: "Seat Pneumatic Test", unit: "Status", spec: "LULUS / MEMENUHI SYARAT" }
+    ]
+  },
+  {
+    id: "std-8",
+    category: "filter cloth",
+    name: "Standard Filter Cloth",
+    source: "KSM INTERNAL",
+    description: "Standar pengujian filter cloth air permeability",
+    parameters: [
+      { name: "Air Permeability", unit: "cc/cm2/s", spec: "125 - 175" }
+    ]
+  },
+  {
+    id: "std-9",
+    category: "rubber",
+    name: "Standard Rubber",
+    source: "KSM INTERNAL",
+    description: "Standar pengujian fisik rubber (Shore A, Shore D, Panas)",
+    parameters: [
+      { name: "Shore A", unit: "Shore A", spec: "60 - 80" },
+      { name: "Shore D", unit: "Shore D", spec: "60 - 80" },
+      { name: "Ketahanan Panas", unit: "Status", spec: "Tahan/Tidak Rusak" }
+    ]
   }
 ];
 

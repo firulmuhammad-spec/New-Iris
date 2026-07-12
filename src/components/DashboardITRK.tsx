@@ -2135,7 +2135,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
       combined.includes("gate") ||
       combined.includes("check")
     ) {
-      category = "logam";
+      category = "Valve";
     } else if (
       combined.includes("seal") ||
       combined.includes("rubber") ||
@@ -2160,6 +2160,14 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
         s.name.toLowerCase().split(" ").some((part: string) => part.length > 5 && combined.includes(part))
       );
     });
+
+    // Override for the 4 unique categories to map to their single system standard
+    if (["benang", "Valve", "filter cloth", "rubber"].includes(category)) {
+      const singleStd = standardsList.find(s => s.category === category);
+      if (singleStd) {
+        matchedStd = singleStd;
+      }
+    }
 
     // Special exact brand name lookup for karung
     if (category === "karung") {
@@ -4346,10 +4354,45 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                         onChange={(e) => {
                           const cat = e.target.value;
                           setManCategory(cat);
-                          setManStandardName("");
-                          setManStandardSource("");
+                          
+                          // Auto select standard for the 4 unique categories
+                          if (["benang", "Valve", "filter cloth", "rubber"].includes(cat)) {
+                            const foundStd = standards.find(s => s.category === cat);
+                            if (foundStd) {
+                              setManStandardName(foundStd.name);
+                              setManStandardSource(foundStd.source || "KSM INTERNAL");
+                              if (foundStd.defaultNamaKarung) {
+                                setManItemName(foundStd.defaultNamaKarung);
+                              } else {
+                                setManItemName(foundStd.name.toUpperCase());
+                              }
+                            } else {
+                              if (cat === "benang") {
+                                setManStandardName("Standard benang jahit karung PG");
+                                setManStandardSource("KSM-B01");
+                                setManItemName("BENANG JAHIT");
+                              } else if (cat === "Valve") {
+                                setManStandardName("Standard Pengujian Valve");
+                                setManStandardSource("KSM INTERNAL");
+                                setManItemName("VALVE");
+                              } else if (cat === "filter cloth") {
+                                setManStandardName("Standard Filter Cloth");
+                                setManStandardSource("KSM INTERNAL");
+                                setManItemName("FILTER CLOTH");
+                              } else if (cat === "rubber") {
+                                setManStandardName("Standard Rubber");
+                                setManStandardSource("KSM INTERNAL");
+                                setManItemName("RUBBER");
+                              }
+                            }
+                          } else {
+                            setManStandardName("");
+                            setManStandardSource("");
+                            setManItemName("");
+                          }
+                          
                           setManMetalAcuan("");
-                          if (cat === "karung") {
+                          if (cat === "karung" || cat === "filter cloth") {
                             setManPoints(5);
                           } else {
                             setManPoints(1);
@@ -4487,10 +4530,17 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                           <option value="Vibrator">🌀 Vibrator Motor (Uji Vibratory Screen)</option>
                         </select>
                       </div>
+                    ) : ["benang", "Valve", "filter cloth", "rubber"].includes(manCategory) ? (
+                      <div className="space-y-1 md:col-span-3 bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-xl px-4 py-2.5 text-xs flex items-center gap-1.5 shadow-sm mt-1">
+                        <span className="text-sm">🎯</span>
+                        <div>
+                          Standard Acuan untuk kategori <strong className="uppercase">{manCategory === "benang" ? "Benang Jahit" : manCategory}</strong> diatur otomatis ke: <strong>{manStandardName} ({manStandardSource})</strong>
+                        </div>
+                      </div>
                     ) : (
                       <div className="space-y-1 md:col-span-2">
                         {/* Non-metal categories directly autocomplete grade */}
-                        <label className="font-bold text-slate-650 block bg-slate-100/50 px-2 py-0.5 rounded inline-block text-xs">Katalog Standard Mutu <span className="text-red-500">*</span></label>
+                        <label className="font-bold text-slate-655 block bg-slate-100/50 px-2 py-0.5 rounded inline-block text-xs">Katalog Standard Mutu <span className="text-red-500">*</span></label>
                         {manCategory === "karung" ? (
                           <select
                             required
@@ -9835,9 +9885,45 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                   <select
                     value={editCategory}
                     onChange={(e) => {
-                      setEditCategory(e.target.value);
-                      setEditStandardName("");
-                      setEditStandardSource("");
+                      const cat = e.target.value;
+                      setEditCategory(cat);
+                      
+                      // Auto select standard for the 4 unique categories
+                      if (["benang", "Valve", "filter cloth", "rubber"].includes(cat)) {
+                        const foundStd = standards.find(s => s.category === cat);
+                        if (foundStd) {
+                          setEditStandardName(foundStd.name);
+                          setEditStandardSource(foundStd.source || "KSM INTERNAL");
+                          if (foundStd.defaultNamaKarung) {
+                            setEditItemName(foundStd.defaultNamaKarung);
+                          } else {
+                            setEditItemName(foundStd.name.toUpperCase());
+                          }
+                        } else {
+                          if (cat === "benang") {
+                            setEditStandardName("Standard benang jahit karung PG");
+                            setEditStandardSource("KSM-B01");
+                            setEditItemName("BENANG JAHIT");
+                          } else if (cat === "Valve") {
+                            setEditStandardName("Standard Pengujian Valve");
+                            setEditStandardSource("KSM INTERNAL");
+                            setEditItemName("VALVE");
+                          } else if (cat === "filter cloth") {
+                            setEditStandardName("Standard Filter Cloth");
+                            setEditStandardSource("KSM INTERNAL");
+                            setEditItemName("FILTER CLOTH");
+                          } else if (cat === "rubber") {
+                            setEditStandardName("Standard Rubber");
+                            setEditStandardSource("KSM INTERNAL");
+                            setEditItemName("RUBBER");
+                          }
+                        }
+                      } else {
+                        setEditStandardName("");
+                        setEditStandardSource("");
+                        setEditItemName("");
+                      }
+                      
                       setEditMetalAcuan("");
                     }}
                     className="w-full text-xs border rounded-lg px-3 py-2 bg-white text-slate-800 font-bold"
@@ -9970,6 +10056,13 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                       </div>
                     )}
                   </>
+                ) : ["benang", "Valve", "filter cloth", "rubber"].includes(editCategory) ? (
+                  <div className="space-y-1 md:col-span-3 bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-xl px-4 py-2.5 text-xs flex items-center gap-1.5 shadow-sm mt-1">
+                    <span className="text-sm">🎯</span>
+                    <div>
+                      Standard Acuan untuk kategori <strong className="uppercase">{editCategory === "benang" ? "Benang Jahit" : editCategory}</strong> diatur otomatis ke: <strong>{editStandardName} ({editStandardSource})</strong>
+                    </div>
+                  </div>
                 ) : (
                   <div className="space-y-1 md:col-span-2">
                     <label className="font-bold text-slate-600 block">Katalog Standard Mutu <span className="text-red-500">*</span></label>
