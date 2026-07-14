@@ -819,19 +819,26 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
     }
 
     setIsAnalyzingNameplate(true);
+    setNameplateOcrStep("📂 Membaca gambar nameplate...");
+    setNameplateOcrModel("");
     try {
+      setNameplateOcrStep("⚙️ Mengompresi gambar nameplate agar proses cepat...");
       const base64Img = await compressAndConvertToBase64(file);
       // Auto-save the uploaded image as the nameplate photo proof for reviewer crosschecking
       setNameplatePhoto(base64Img);
 
+      setNameplateOcrStep("🚀 Mengunggah gambar nameplate ke server...");
+      setNameplateOcrStep("🤖 Memanggil model Gemini 3.5 Flash (proses OCR & ekstraksi spek teknik)...");
       const res = await fetch("/api/gemini/analyze-nameplate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageBase64: base64Img })
       });
+      setNameplateOcrStep("🧩 Menyelaraskan spesifikasi hasil deteksi dengan standar acuan...");
       const data = await res.json();
       if (data.success && data.parsed) {
         const p = data.parsed;
+        setNameplateOcrModel(data.modelUsed || "gemini-3.5-flash");
         
         // Helper to solve matching text choosing the more detailed string
         const selectMoreDetailed = (str1: string, str2: string) => {
@@ -904,13 +911,16 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
         // Increment daily usage quota
         incrementDailyOcr();
-        alert(`🎉 Bantuan AI berhasil memadankan & mengisi spesifikasi nameplate! (${dailyOcrCount + 1}/10 scan terpakai hari ini)`);
+        setNameplateOcrStep("🎉 Sukses mencocokkan & memadankan!");
+        alert(`🎉 Bantuan AI berhasil memadankan & mengisi spesifikasi nameplate! (${dailyOcrCount + 1}/10 scan terpakai hari ini, Model: ${data.modelUsed || "gemini-3.5-flash"})`);
       } else {
+        setNameplateOcrStep("");
         alert(data.message || "Gagal memproses gambar nameplate via AI.");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("Gagal menganalisis nameplate via AI.");
+      setNameplateOcrStep("");
+      alert("Gagal menganalisis nameplate via AI: " + (err.message || err));
     } finally {
       setIsAnalyzingNameplate(false);
     }
@@ -922,6 +932,11 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
   const [aiScanning, setAiScanning] = useState(false);
   const [aiError, setAiError] = useState("");
   const [ocrBase64, setOcrBase64] = useState("");
+  const [importFormat, setImportFormat] = useState<"auto" | "logam" | "karung_benang">("auto");
+  const [aiOcrStep, setAiOcrStep] = useState<string>("");
+  const [aiOcrSuccessModel, setAiOcrSuccessModel] = useState<string>("");
+  const [nameplateOcrStep, setNameplateOcrStep] = useState<string>("");
+  const [nameplateOcrModel, setNameplateOcrModel] = useState<string>("");
   
   // Signature management
   const [newSigName, setNewSigName] = useState("");
@@ -2047,42 +2062,58 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
     setAiScanning(true);
     setAiError("");
+    setAiOcrStep("📂 Membaca berkas gambar...");
+    setAiOcrSuccessModel("");
 
     try {
       const reader = new FileReader();
       reader.onloadend = async () => {
-        const base64Str = (reader.result as string).split(",")[1];
-        setOcrBase64(base64Str);
+        try {
+          setAiOcrStep("⚙️ Mengompresi gambar (mengurangi resolusi agar upload cepat)...");
+          const base64Str = await compressAndConvertToBase64(file);
+          setOcrBase64(base64Str);
 
-        // Call proxy API
-        const response = await fetch("/api/gemini/parse", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            base64Image: base64Str,
-            mimeType: file.type
-          })
-        });
+          setAiOcrStep("🚀 Mengirimkan berkas ke Server Departemen ITRK...");
+          setAiOcrStep("🤖 Memanggil model kecerdasan buatan Gemini 3.5 Flash (proses scanning & OCR)...");
+          const response = await fetch("/api/gemini/parse", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              base64Image: base64Str,
+              mimeType: file.type
+            })
+          });
 
-        const data = await response.json();
-        if (data.success && data.parsed) {
-          const existingVendorsList = Array.from(new Set(registrations.map(r => r.vendor))).filter(Boolean) as string[];
-          const normalizedParsed = data.parsed.map((item: any) => ({
-            ...item,
-            vendor: findMatchingVendor(item.vendor || "VENDOR LOCAL", existingVendorsList)
-          }));
-          // Put parsed items in the preview buffer
-          setBatchPreviewItems(normalizedParsed);
-          alert(`Sukses! AI menemukan ${data.parsed.length} barang pada dokumen. Silakan periksa pratinjau daftar di bawah.`);
-        } else {
-          setAiError(data.message || "Gagal parsing.");
+          setAiOcrStep("🧩 Memproses JSON hasil deteksi & memperkaya data acuan...");
+          const data = await response.json();
+          if (data.success && data.parsed) {
+            setAiOcrSuccessModel(data.modelUsed || "gemini-3.5-flash");
+            const existingVendorsList = Array.from(new Set(registrations.map(r => r.vendor))).filter(Boolean) as string[];
+            const normalizedParsed = data.parsed.map((item: any) => ({
+              ...item,
+              vendor: findMatchingVendor(item.vendor || "VENDOR LOCAL", existingVendorsList)
+            }));
+            // Put parsed items in the preview buffer
+            setBatchPreviewItems(normalizedParsed);
+            setAiOcrStep("🎉 Selesai! Semua baris berhasil diurai.");
+            alert(`Sukses! AI menemukan ${data.parsed.length} barang pada dokumen. Silakan periksa pratinjau daftar di bawah. (Model: ${data.modelUsed || "gemini-3.5-flash"})`);
+          } else {
+            setAiError(data.message || "Gagal parsing.");
+            setAiOcrStep("");
+          }
+          setAiScanning(false);
+        } catch (innerErr: any) {
+          console.error(innerErr);
+          setAiError(innerErr.message || "Gagal memproses gambar.");
+          setAiScanning(false);
+          setAiOcrStep("");
         }
-        setAiScanning(false);
       };
       reader.readAsDataURL(file);
     } catch (err: any) {
       setAiError(err.message || "Gagal membaca berkas.");
       setAiScanning(false);
+      setAiOcrStep("");
     }
   };
 
@@ -2243,104 +2274,45 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
     if (!importText.trim()) return;
 
     setAiScanning(true);
+    setAiOcrStep("📂 Mengurai data teks input...");
     const text = importText.trim();
     let parsedItems: any[] = [];
 
-    // Check if this looks like the corporate Petrokimia CSV format
-    const isPetrokimiaFormat = 
-      text.includes("PERMINTAAN UJI / ANALISA") || 
-      text.includes("PENERIMAAN SUKU CADANG") || 
-      text.includes("Nomor PPJ") || 
-      text.includes("NAMA BARANG / MATERIAL");
-
-    if (isPetrokimiaFormat) {
-      // Robust Petrokimia CSV Parsing
-      const lines = text.split(/\r?\n/);
-      let currentPpjShort = "";
-      let currentPpjFull = "";
-      let currentTanggalPPJ = new Date().toISOString().split("T")[0]; // default to today
+    // Determine if it is Karung/Benang format
+    let isKarungFormat = false;
+    if (importFormat === "karung_benang") {
+      isKarungFormat = true;
+    } else if (importFormat === "logam") {
+      isKarungFormat = false;
+    } else {
+      // Auto-detect format mode based on content keywords
+      const isKarungKeywords = 
+        text.includes("KEBERTERIMAAN KARUNG") || 
+        text.includes("KEBERTERIMAAN BENANG") || 
+        text.includes("Jenis karung") || 
+        text.includes("Jenis benang") || 
+        text.includes("Pemasok") || 
+        text.includes("Hasil Uji") ||
+        text.includes("Nopol") ||
+        text.includes("Hardosoloplast") ||
+        text.includes("Poliplas") ||
+        text.includes("Gemah Makmur");
       
-      let activeItem: any = null;
-      let activeSubLines: string[][] = [];
+      const isPetrokimiaFormat = 
+        text.includes("PERMINTAAN UJI / ANALISA") || 
+        text.includes("PENERIMAAN SUKU CADANG") || 
+        text.includes("Nomor PPJ") || 
+        text.includes("NAMA BARANG / MATERIAL");
 
-      const flushActiveItem = () => {
-        if (activeItem && activeSubLines.length > 0) {
-          let poCode = "";
-          let prCode = "";
-          let vendor = "";
-          let specifications: string[] = [];
+      if (isKarungKeywords && !isPetrokimiaFormat) {
+        isKarungFormat = true;
+      }
+    }
 
-          activeSubLines.forEach((cells, subIdx) => {
-            // Heuristics for PO
-            cells.forEach(cell => {
-              const cleaned = cell.trim();
-              const poMatch = cleaned.match(/51\d{8}/);
-              if (poMatch) poCode = poMatch[0];
-            });
-
-            // Heuristics for PR
-            cells.forEach(cell => {
-              const cleaned = cell.trim();
-              const prMatch = cleaned.match(/22\d{8}/);
-              if (prMatch) prCode = prMatch[0];
-            });
-
-            // Heuristics for Vendor
-            const potentialVendor = cells[6]?.trim();
-            if (potentialVendor && 
-                potentialVendor.toUpperCase() !== "SI" && 
-                potentialVendor.toUpperCase() !== "NSI" && 
-                !potentialVendor.includes("PO :") && 
-                !potentialVendor.includes("PR :") && 
-                potentialVendor.length > 3) {
-              vendor = potentialVendor;
-            }
-
-            // Gather complete specifications/descriptions (including lines starting with or containing '===')
-            if (subIdx > 0) {
-              const cleanRowContent = cells
-                .map(c => c.trim())
-                .filter(c => {
-                  if (!c) return false;
-                  // Skip PR/PO matches and general labels in description
-                  if (c.match(/51\d{8}/) || c.match(/22\d{8}/)) return false;
-                  if (c === "PO :" || c === "PR :") return false;
-                  if (c.toUpperCase() === "KODE MATERIAL") return false;
-                  return true;
-                });
-              
-              if (cleanRowContent.length > 0) {
-                specifications.push(cleanRowContent.join(" "));
-              }
-            }
-          });
-
-          // Join specifications as description
-          const descriptionJoined = specifications.join("\n");
-          
-          // Classify category and standardName automatically
-          const analysis = detectCategoryAndStandard(activeItem.itemName, descriptionJoined, standards);
-
-          parsedItems.push({
-            ppjCode: currentPpjShort || "1000",
-            ppjFull: currentPpjFull || `${currentPpjShort}/LG.01.01/101/MI/2026`,
-            prCode: prCode || "UNASSIGNED",
-            poCode: poCode || "UNASSIGNED",
-            vendor: vendor ? vendor.toUpperCase() : "VENDOR LOCAL",
-            itemName: analysis.itemNameOverride ? analysis.itemNameOverride.toUpperCase() : activeItem.itemName.toUpperCase(),
-            category: analysis.category,
-            standardName: analysis.standardName,
-            standardSource: analysis.standardSource,
-            quantity: activeItem.quantity || "1 EA",
-            points: 1, // Defaulting to exactly 1 point as requested!
-            description: descriptionJoined,
-            tanggalPPJ: currentTanggalPPJ
-          });
-
-          activeItem = null;
-          activeSubLines = [];
-        }
-      };
+    if (isKarungFormat) {
+      setAiOcrStep("🌾 Mendeteksi Format Keberterimaan Karung & Benang...");
+      const lines = text.split(/\r?\n/);
+      let currentTanggal = new Date().toISOString().split("T")[0]; // default date
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -2351,113 +2323,293 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
         const firstCell = cells[0].trim();
 
-        // 1. Check if PPJ No line
-        if (line.includes("Nomor PPJ") || firstCell.toLowerCase().includes("nomor ppj")) {
-          flushActiveItem();
-
-          let foundPpj = "";
-          cells.forEach(c => {
-            const cleaned = c.trim();
-            if (cleaned.includes("/") && cleaned.length > 8) {
-              foundPpj = cleaned;
-            }
-          });
-          if (foundPpj) {
-            currentPpjFull = foundPpj;
-            currentPpjShort = foundPpj.split("/")[0] || "";
+        // 1. Check for Tanggal row, e.g. "Tanggal :,Rabu/ 01-07-26"
+        let foundDateCell = "";
+        if (line.toLowerCase().includes("tanggal")) {
+          const dateIdx = cells.findIndex(c => c.toLowerCase().includes("tanggal"));
+          if (dateIdx !== -1 && cells[dateIdx + 1]) {
+            foundDateCell = cells[dateIdx + 1].trim();
+          } else {
+            cells.forEach(c => {
+              if (c.includes("-") && c.split("-").length >= 2) {
+                foundDateCell = c.trim();
+              }
+            });
           }
         }
 
-        // 2. Check if Tanggal line
-        if (line.includes("Tanggal") || firstCell.toLowerCase().includes("tanggal")) {
-          let foundDate = "";
-          cells.forEach(c => {
-            const cleaned = c.trim();
-            if (cleaned.length > 5 && !cleaned.includes(":") && !cleaned.toLowerCase().includes("tanggal")) {
-              foundDate = cleaned;
+        if (foundDateCell) {
+          // Parse date: e.g. "Rabu/ 01-07-26" -> "2026-07-01" or "07-07-26" -> "2026-07-07"
+          const cleanDate = foundDateCell.replace(/^[a-zA-Z\s\/]+/, "").trim(); // strip day name and slash
+          const parts = cleanDate.split(/[-/]/);
+          if (parts.length === 3) {
+            let day = parts[0].padStart(2, "0");
+            let month = parts[1].padStart(2, "0");
+            let year = parts[2];
+            if (year.length === 2) {
+              year = "20" + year;
             }
-          });
-          if (foundDate) {
-            currentTanggalPPJ = foundDate;
+            currentTanggal = `${year}-${month}-${day}`;
           }
         }
 
-        // 3. Check if line starts an item
-        const isNewItemRow = /^\d+$/.test(firstCell);
-        if (isNewItemRow) {
-          flushActiveItem();
+        // 2. Check if data row (starts with a number)
+        const isDataRow = /^\d+$/.test(firstCell);
+        if (isDataRow) {
+          const vendorRaw = cells[1]?.trim() || "";
+          const poCode = cells[2]?.trim() || "UNASSIGNED";
+          const itemJenis = cells[3]?.trim() || "SAMPEL KARUNG";
+          const ballCount = cells[4]?.trim() || "";
+          const sheetCount = cells[5]?.trim() || "";
+          const platNomor = cells[6]?.trim() || "";
+          const ppjRaw = cells[7]?.trim() || "";
 
-          const itemName = cells[1]?.trim() || "UNNAMED ITEM";
-          const qtyVal = cells[4]?.trim() || "1";
-          const unitVal = cells[5]?.trim() || "EA";
-          
-          activeItem = {
-            itemNo: parseInt(firstCell, 10),
-            itemName: itemName,
-            quantity: `${qtyVal} ${unitVal}`.trim()
-          };
-          activeSubLines = [cells]; // seed first line
-        } else {
-          if (activeItem) {
-            if (line.includes("PENERIMAAN SUKU CADANG") || line.includes("PT PETROKIMIA") || line.includes("PERMINTAAN UJI")) {
-              flushActiveItem();
-            } else {
-              activeSubLines.push(cells);
-            }
+          if (vendorRaw && poCode) {
+            const vendorClean = vendorRaw.replace(/\s*\([^)]*\)/g, "").trim().toUpperCase();
+            const ppjFour = String(ppjRaw || "1000").padStart(4, "0");
+            const targetYearStr = currentTanggal.split("-")[0];
+            const ppjFull = `${ppjFour}/LG.01.01/101/MI/${targetYearStr}`;
+
+            const isBenang = itemJenis.toLowerCase().includes("benang") || itemJenis.toLowerCase().includes("jahit") || itemJenis.toLowerCase().includes("thread");
+            const category = isBenang ? "benang" : "karung";
+            const qtyStr = sheetCount ? `${sheetCount} ${category === "benang" ? "Kg" : "Lembar"}` : (ballCount ? `${ballCount} Ball` : "1 EA");
+
+            const analysis = detectCategoryAndStandard(itemJenis, category, standards);
+
+            parsedItems.push({
+              ppjCode: ppjRaw || "1000",
+              ppjFull: ppjFull,
+              prCode: "UNASSIGNED",
+              poCode: poCode,
+              vendor: vendorClean,
+              itemName: analysis.itemNameOverride ? analysis.itemNameOverride.toUpperCase() : itemJenis.toUpperCase(),
+              category: category,
+              standardName: analysis.standardName,
+              standardSource: analysis.standardSource,
+              quantity: qtyStr,
+              points: category === "karung" ? 5 : 1, // Sack gets 5 points, thread gets 1 point
+              description: `Ball/Box: ${ballCount}, Lembar/Kg: ${sheetCount}, Nopol: ${platNomor}`,
+              tanggalPPJ: currentTanggal
+            });
           }
         }
       }
-
-      flushActiveItem();
-
     } else {
-      // Fallback: Standard Tab tabular format, supporting comma and semicolon separators
-      const lines = text.split("\n");
-      lines.forEach((line) => {
-        if (!line.trim()) return;
-        // Check separator: tab, semicolon, or comma
-        let cols = line.split("\t");
-        if (cols.length < 3) {
-          cols = line.split(";");
-        }
-        if (cols.length < 3) {
-          cols = line.split(",");
-        }
+      setAiOcrStep("🔩 Mendeteksi Format Suku Cadang Logam...");
+      // Check if this looks like the corporate Petrokimia CSV format
+      const isPetrokimiaFormat = 
+        text.includes("PERMINTAAN UJI / ANALISA") || 
+        text.includes("PENERIMAAN SUKU CADANG") || 
+        text.includes("Nomor PPJ") || 
+        text.includes("NAMA BARANG / MATERIAL");
+
+      if (isPetrokimiaFormat) {
+        // Robust Petrokimia CSV Parsing
+        const lines = text.split(/\r?\n/);
+        let currentPpjShort = "";
+        let currentPpjFull = "";
+        let currentTanggalPPJ = new Date().toISOString().split("T")[0]; // default to today
         
-        // Clean each column
-        const cleanedCols = cols.map(c => c?.trim() || "");
-        
-        // Ensure we have at least one column with content
-        if (cleanedCols.some(c => c.length > 0)) {
-          const ppjVal = cleanedCols[0] || "1000";
-          const prVal = cleanedCols[1] || "UNASSIGNED";
-          const poVal = cleanedCols[2] || "UNASSIGNED";
-          const vendorVal = (cleanedCols[3] || "VENDOR LOCAL").toUpperCase();
-          const itemNameVal = (cleanedCols[4] || cleanedCols[0] || "SAMPEL TERIMPOR").toUpperCase();
-          const catVal = cleanedCols[5] || "logam";
-          const stdVal = cleanedCols[6] || "STANDAR INTERNAL";
-          const qtyVal = cleanedCols[7] || "1 EA";
-          
-          // Detect category and standard
-          const analysis = detectCategoryAndStandard(itemNameVal, stdVal, standards);
-          
-          parsedItems.push({
-            ppjCode: ppjVal,
-            prCode: prVal,
-            poCode: poVal,
-            vendor: vendorVal,
-            itemName: analysis.itemNameOverride ? analysis.itemNameOverride.toUpperCase() : itemNameVal,
-            category: analysis.category || catVal,
-            standardName: analysis.itemNameOverride ? analysis.standardName : (stdVal || analysis.standardName),
-            standardSource: analysis.standardSource || "KSM INTERNAL",
-            quantity: qtyVal,
-            points: 1,
-            description: "Daftar batch input ter-ekstrak"
-          });
+        let activeItem: any = null;
+        let activeSubLines: string[][] = [];
+
+        const flushActiveItem = () => {
+          if (activeItem && activeSubLines.length > 0) {
+            let poCode = "";
+            let prCode = "";
+            let vendor = "";
+            let specifications: string[] = [];
+
+            activeSubLines.forEach((cells, subIdx) => {
+              // Heuristics for PO
+              cells.forEach(cell => {
+                const cleaned = cell.trim();
+                const poMatch = cleaned.match(/51\d{8}/);
+                if (poMatch) poCode = poMatch[0];
+              });
+
+              // Heuristics for PR
+              cells.forEach(cell => {
+                const cleaned = cell.trim();
+                const prMatch = cleaned.match(/22\d{8}/);
+                if (prMatch) prCode = prMatch[0];
+              });
+
+              // Heuristics for Vendor
+              const potentialVendor = cells[6]?.trim();
+              if (potentialVendor && 
+                  potentialVendor.toUpperCase() !== "SI" && 
+                  potentialVendor.toUpperCase() !== "NSI" && 
+                  !potentialVendor.includes("PO :") && 
+                  !potentialVendor.includes("PR :") && 
+                  potentialVendor.length > 3) {
+                vendor = potentialVendor;
+              }
+
+              // Gather complete specifications/descriptions (including lines starting with or containing '===')
+              if (subIdx > 0) {
+                const cleanRowContent = cells
+                  .map(c => c.trim())
+                  .filter(c => {
+                    if (!c) return false;
+                    // Skip PR/PO matches and general labels in description
+                    if (c.match(/51\d{8}/) || c.match(/22\d{8}/)) return false;
+                    if (c === "PO :" || c === "PR :") return false;
+                    if (c.toUpperCase() === "KODE MATERIAL") return false;
+                    return true;
+                  });
+                
+                if (cleanRowContent.length > 0) {
+                  specifications.push(cleanRowContent.join(" "));
+                }
+              }
+            });
+
+            // Join specifications as description
+            const descriptionJoined = specifications.join("\n");
+            
+            // Classify category and standardName automatically
+            const analysis = detectCategoryAndStandard(activeItem.itemName, descriptionJoined, standards);
+
+            parsedItems.push({
+              ppjCode: currentPpjShort || "1000",
+              ppjFull: currentPpjFull || `${currentPpjShort}/LG.01.01/101/MI/2026`,
+              prCode: prCode || "UNASSIGNED",
+              poCode: poCode || "UNASSIGNED",
+              vendor: vendor ? vendor.toUpperCase() : "VENDOR LOCAL",
+              itemName: analysis.itemNameOverride ? analysis.itemNameOverride.toUpperCase() : activeItem.itemName.toUpperCase(),
+              category: analysis.category,
+              standardName: analysis.standardName,
+              standardSource: analysis.standardSource,
+              quantity: activeItem.quantity || "1 EA",
+              points: 1, // Defaulting to exactly 1 point as requested!
+              description: descriptionJoined,
+              tanggalPPJ: currentTanggalPPJ
+            });
+
+            activeItem = null;
+            activeSubLines = [];
+          }
+        };
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (!line.trim()) continue;
+
+          const cells = parseCSVLine(line);
+          if (cells.length === 0) continue;
+
+          const firstCell = cells[0].trim();
+
+          // 1. Check if PPJ No line
+          if (line.includes("Nomor PPJ") || firstCell.toLowerCase().includes("nomor ppj")) {
+            flushActiveItem();
+
+            let foundPpj = "";
+            cells.forEach(c => {
+              const cleaned = c.trim();
+              if (cleaned.includes("/") && cleaned.length > 8) {
+                foundPpj = cleaned;
+              }
+            });
+            if (foundPpj) {
+              currentPpjFull = foundPpj;
+              currentPpjShort = foundPpj.split("/")[0] || "";
+            }
+          }
+
+          // 2. Check if Tanggal line
+          if (line.includes("Tanggal") || firstCell.toLowerCase().includes("tanggal")) {
+            let foundDate = "";
+            cells.forEach(c => {
+              const cleaned = c.trim();
+              if (cleaned.length > 5 && !cleaned.includes(":") && !cleaned.toLowerCase().includes("tanggal")) {
+                foundDate = cleaned;
+              }
+            });
+            if (foundDate) {
+              currentTanggalPPJ = foundDate;
+            }
+          }
+
+          // 3. Check if line starts an item
+          const isNewItemRow = /^\d+$/.test(firstCell);
+          if (isNewItemRow) {
+            flushActiveItem();
+
+            const itemName = cells[1]?.trim() || "UNNAMED ITEM";
+            const qtyVal = cells[4]?.trim() || "1";
+            const unitVal = cells[5]?.trim() || "EA";
+            
+            activeItem = {
+              itemNo: parseInt(firstCell, 10),
+              itemName: itemName,
+              quantity: `${qtyVal} ${unitVal}`.trim()
+            };
+            activeSubLines = [cells]; // seed first line
+          } else {
+            if (activeItem) {
+              if (line.includes("PENERIMAAN SUKU CADANG") || line.includes("PT PETROKIMIA") || line.includes("PERMINTAAN UJI")) {
+                flushActiveItem();
+              } else {
+                activeSubLines.push(cells);
+              }
+            }
+          }
         }
-      });
+
+        flushActiveItem();
+
+      } else {
+        // Fallback: Standard Tab tabular format, supporting comma and semicolon separators
+        const lines = text.split("\n");
+        lines.forEach((line) => {
+          if (!line.trim()) return;
+          // Check separator: tab, semicolon, or comma
+          let cols = line.split("\t");
+          if (cols.length < 3) {
+            cols = line.split(";");
+          }
+          if (cols.length < 3) {
+            cols = line.split(",");
+          }
+          
+          // Clean each column
+          const cleanedCols = cols.map(c => c?.trim() || "");
+          
+          // Ensure we have at least one column with content
+          if (cleanedCols.some(c => c.length > 0)) {
+            const ppjVal = cleanedCols[0] || "1000";
+            const prVal = cleanedCols[1] || "UNASSIGNED";
+            const poVal = cleanedCols[2] || "UNASSIGNED";
+            const vendorVal = (cleanedCols[3] || "VENDOR LOCAL").toUpperCase();
+            const itemNameVal = (cleanedCols[4] || cleanedCols[0] || "SAMPEL TERIMPOR").toUpperCase();
+            const catVal = cleanedCols[5] || "logam";
+            const stdVal = cleanedCols[6] || "STANDAR INTERNAL";
+            const qtyVal = cleanedCols[7] || "1 EA";
+            
+            // Detect category and standard
+            const analysis = detectCategoryAndStandard(itemNameVal, stdVal, standards);
+            
+            parsedItems.push({
+              ppjCode: ppjVal,
+              prCode: prVal,
+              poCode: poVal,
+              vendor: vendorVal,
+              itemName: analysis.itemNameOverride ? analysis.itemNameOverride.toUpperCase() : itemNameVal,
+              category: analysis.category || catVal,
+              standardName: analysis.itemNameOverride ? analysis.standardName : (stdVal || analysis.standardName),
+              standardSource: analysis.standardSource || "KSM INTERNAL",
+              quantity: qtyVal,
+              points: 1,
+              description: "Daftar batch input ter-ekstrak"
+            });
+          }
+        });
+      }
     }
 
+    setAiOcrStep("🧩 Mengelompokkan & sinkronisasi No PPJ...");
     // Post-Process Grouping & Chronological Forward-Fill (PPJ, PR, PO, Vendor)
     if (parsedItems.length > 0) {
       let lastValidPr = "UNASSIGNED";
@@ -2522,8 +2674,10 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
       setBatchPreviewItems(parsedItems);
       setImportText("");
       setPastingMode(false);
+      setAiOcrStep("");
       alert(`Berhasil mengurai dan memuat ${parsedItems.length} sampel baru ke daftar pratinjau batch PPJ! Silakan periksa detailnya di bawah.`);
     } else {
+      setAiOcrStep("");
       alert("Error: Gagal mengurai baris text. Pastikan format paste sesuai berupa Tabular Excel atau CSV resmi PPJ Petrokimia Gresik.");
     }
     setAiScanning(false);
@@ -4268,15 +4422,44 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
               </div>
 
               {aiScanning && (
-                <div className="bg-emerald-50 text-emerald-950 p-4 border rounded-xl flex items-center gap-3 text-xs font-semibold">
-                  <Loader2 className="w-5 h-5 animate-spin text-[#006A4E]" />
-                  <span>Sistem Gemini AI sedang menganalisis dokumen PPJ, mencocokkan acuan logam, dan merakit draf secara otomatis...</span>
+                <div className="bg-emerald-50 text-emerald-950 p-5 border border-emerald-300 rounded-2xl space-y-3 text-xs shadow-sm">
+                  <div className="flex items-center gap-3 font-extrabold text-[#006A4E]">
+                    <Loader2 className="w-5 h-5 animate-spin text-[#006A4E]" />
+                    <span>Laporan Transparansi Proses AI OCR & Ekstraksi Dokumen:</span>
+                  </div>
+                  <div className="bg-white/85 p-3 rounded-lg border border-emerald-200/60 font-mono text-[11px] space-y-1.5 text-slate-700">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                      <span className="font-extrabold text-emerald-900">Fase Aktif:</span>
+                      <span className="font-bold">{aiOcrStep || "Menyiapkan data masukan..."}</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-1 pl-4">
+                      🔧 Alur Ekstraksi: 1. Baca Gambar ➔ 2. Kompresi Cepat ➔ 3. Unggah Payload ➔ 4. Analisis Gemini API ➔ 5. Pemetaan Heuristik & Standar Mutu.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {aiOcrSuccessModel && (
+                <div className="bg-indigo-50 text-indigo-950 p-3.5 border border-indigo-200 rounded-xl flex items-center justify-between text-xs font-bold animate-fade-in shadow-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="bg-indigo-600 text-white text-[9px] px-1.5 py-0.5 rounded-sm font-extrabold">MODEL BERHASIL</span>
+                    <span>Proses pembacaan diselesaikan secara presisi oleh:</span>
+                    <code className="bg-indigo-150 text-indigo-900 px-1.5 py-0.5 rounded font-mono text-[10px] font-black">{aiOcrSuccessModel}</code>
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => setAiOcrSuccessModel("")} 
+                    className="text-indigo-400 hover:text-indigo-700 text-xs font-black px-1.5"
+                  >
+                    ×
+                  </button>
                 </div>
               )}
 
               {aiError && (
                 <div className="bg-red-50 text-red-800 p-4 border border-red-200 rounded-xl flex items-center gap-2 text-xs font-medium">
-                  <AlertTriangle className="w-5 h-5" />
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
                   <span>AI parsing errored: {aiError}. Kami sarankan memakai metode manual atau pasting standar.</span>
                 </div>
               )}
@@ -4771,7 +4954,44 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
                     {/* Right Column: Paste Textarea */}
                     <div className="lg:col-span-2 space-y-2">
-                      <label className="font-bold text-slate-700 text-xs block">Tempel data teks di sini:</label>
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                        <label className="font-bold text-slate-700 text-xs">Pilih Format Masukan / Pembacaan Teks:</label>
+                        <div className="flex rounded-lg border border-indigo-200 bg-white p-0.5 shadow-sm text-[10px] font-bold">
+                          <button
+                            type="button"
+                            onClick={() => setImportFormat("auto")}
+                            className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                              importFormat === "auto"
+                                ? "bg-indigo-600 text-white shadow-sm"
+                                : "text-slate-600 hover:text-indigo-900"
+                            }`}
+                          >
+                            🔍 Otomatis (Auto-Detect)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setImportFormat("logam")}
+                            className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                              importFormat === "logam"
+                                ? "bg-indigo-600 text-white shadow-sm"
+                                : "text-slate-600 hover:text-indigo-900"
+                            }`}
+                          >
+                            🔩 Logam Suku Cadang
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setImportFormat("karung_benang")}
+                            className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                              importFormat === "karung_benang"
+                                ? "bg-indigo-600 text-white shadow-sm"
+                                : "text-slate-600 hover:text-indigo-900"
+                            }`}
+                          >
+                            🌾 Karung / Benang
+                          </button>
+                        </div>
+                      </div>
                       <textarea
                         rows={8}
                         value={importText}
@@ -5000,36 +5220,48 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
                             {/* STANDARD ACUAN & GRADE ENTIRELY IMPLEMENTING REQUEST 3 */}
                             <td className="p-2.5 space-y-2 bg-slate-50/50">
-                              {item.category === "karung" ? (
+                              {item.category !== "logam" ? (
                                 <div className="flex flex-col space-y-1">
                                   <span className="text-[8px] text-indigo-800 font-extrabold uppercase tracking-wider">Acuan Standard (Master DB)</span>
-                                  <select
-                                    value={item.standardName || ""}
-                                    onChange={(e) => {
-                                      const chosenName = e.target.value;
-                                      const chosenStd = standards.find(s => s.category === "karung" && s.name === chosenName);
-                                      if (chosenStd) {
-                                        updatePreviewItem(idx, {
-                                          standardName: chosenStd.name,
-                                          standardSource: chosenStd.source || "KSM INTERNAL",
-                                          itemName: chosenStd.defaultNamaKarung || chosenStd.name
-                                        });
+                                  {standards.filter(s => s.category === item.category).length > 0 ? (
+                                    <select
+                                      value={item.standardName || ""}
+                                      onChange={(e) => {
+                                        const chosenName = e.target.value;
+                                        const chosenStd = standards.find(s => s.category === item.category && s.name === chosenName);
+                                        if (chosenStd) {
+                                          updatePreviewItem(idx, {
+                                            standardName: chosenStd.name,
+                                            standardSource: chosenStd.source || "KSM INTERNAL",
+                                            itemName: item.category === "karung" ? (chosenStd.defaultNamaKarung || chosenStd.name) : (item.itemName || chosenStd.name)
+                                          });
+                                        } else {
+                                          updatePreviewItem(idx, { standardName: chosenName });
+                                        }
+                                      }}
+                                      className="w-full border border-indigo-300 focus:border-indigo-600 rounded p-1.5 text-xs text-slate-800 bg-white font-black focus:outline-none focus:ring-2 focus:ring-indigo-500/10 transition-colors animate-fade-in"
+                                    >
+                                      <option value="">-- Pilih Acuan {item.category} --</option>
+                                      {standards
+                                        .filter(s => s.category === item.category)
+                                        .map(s => (
+                                          <option key={s.name} value={s.name}>
+                                            {s.name}
+                                          </option>
+                                        ))
                                       }
-                                    }}
-                                    className="w-full border border-indigo-300 focus:border-indigo-600 rounded p-1.5 text-xs text-slate-800 bg-white font-black focus:outline-none focus:ring-2 focus:ring-indigo-500/10 transition-colors animate-fade-in"
-                                  >
-                                    <option value="">-- Pilih Acuan Karung Master --</option>
-                                    {standards
-                                      .filter(s => s.category === "karung")
-                                      .map(s => (
-                                        <option key={s.name} value={s.name}>
-                                          {s.name}
-                                        </option>
-                                      ))
-                                    }
-                                  </select>
+                                    </select>
+                                  ) : (
+                                    <input
+                                      type="text"
+                                      value={item.standardName || ""}
+                                      placeholder="Contoh: KSM-K10, API 598, SNI-09"
+                                      onChange={(e) => updatePreviewItem(idx, { standardName: e.target.value, standardSource: "KSM INTERNAL" })}
+                                      className="w-full border border-slate-200 hover:border-amber-400 focus:border-amber-600 rounded px-2 py-1 text-xs text-slate-800 bg-white font-black focus:outline-none focus:ring-1 focus:ring-amber-500/20"
+                                    />
+                                  )}
                                 </div>
-                              ) : item.category === "logam" ? (
+                              ) : (
                                 <div className="space-y-1.5 animate-fade-in">
                                   <div className="flex flex-col">
                                     <span className="text-[8px] text-amber-800 font-extrabold uppercase tracking-wider">Acu: Standard Reference</span>
@@ -5068,17 +5300,6 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                                       }
                                     </select>
                                   </div>
-                                </div>
-                              ) : (
-                                <div className="flex flex-col">
-                                  <span className="text-[8px] text-indigo-800 font-extrabold uppercase tracking-wider">Acuan Standard (KSM / PO)</span>
-                                  <input
-                                    type="text"
-                                    value={item.standardName || ""}
-                                    placeholder="Contoh: KSM-K10, API 598, SNI-09"
-                                    onChange={(e) => updatePreviewItem(idx, { standardName: e.target.value, standardSource: "KSM INTERNAL" })}
-                                    className="w-full border border-slate-200 hover:border-amber-400 focus:border-amber-600 rounded px-2 py-1 text-xs text-slate-800 bg-white font-black focus:outline-none focus:ring-1 focus:ring-amber-500/20"
-                                  />
                                 </div>
                               )}
                             </td>
@@ -6540,11 +6761,15 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
                           <div className="relative border-2 border-dashed border-indigo-500/50 hover:border-indigo-400 rounded-xl p-6 text-center transition-all bg-indigo-950/30 cursor-pointer group">
                             {isAnalyzingNameplate ? (
-                              <div className="space-y-3 py-2 flex flex-col items-center justify-center">
+                              <div className="space-y-3 py-2 flex flex-col items-center justify-center text-slate-200">
                                 <Loader2 className="w-8 h-8 text-emerald-450 animate-spin" />
-                                <div className="space-y-1">
-                                  <p className="text-xs font-black text-emerald-400 animate-pulse">Scanning NamePlate via AI...</p>
-                                  <p className="text-[10px] text-slate-400 font-medium">Melakukan optical character recognition (OCR) & parsing mendalam...</p>
+                                <div className="space-y-1 bg-slate-900/60 p-3 rounded-lg border border-slate-750 font-mono text-[11px] text-left max-w-sm mx-auto">
+                                  <p className="text-xs font-black text-emerald-400 animate-pulse text-center">Scanning NamePlate via AI...</p>
+                                  <div className="flex items-center gap-1.5 mt-2 border-t border-slate-850 pt-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                                    <span className="text-slate-400">Tahap Aktif:</span>
+                                    <span className="text-white font-black">{nameplateOcrStep || "Inisialisasi pemindaian..."}</span>
+                                  </div>
                                 </div>
                               </div>
                             ) : (
@@ -6566,6 +6791,13 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                               </label>
                             )}
                           </div>
+
+                          {nameplateOcrModel && (
+                            <div className="bg-slate-900/40 text-slate-300 p-2.5 rounded-lg border border-slate-700/60 text-[10px] font-bold flex justify-between items-center animate-fade-in mt-1.5">
+                              <span>🤖 Nameplate diurai oleh model: <code className="bg-slate-800 text-amber-400 px-1 py-0.5 rounded font-mono font-black">{nameplateOcrModel}</code></span>
+                              <button type="button" onClick={() => setNameplateOcrModel("")} className="text-slate-400 hover:text-white font-bold px-1.5">×</button>
+                            </div>
+                          )}
                         </div>
                       )}
 
