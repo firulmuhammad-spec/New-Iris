@@ -1455,7 +1455,7 @@ async function generateContentWithFallback(ai: any, params: {
       console.log(`[Gemini API] Menghubungi model: ${model}...`);
       
       // Enforce a 60-second timeout on each model request to prevent long hangs
-      const response = await withTimeout(
+      const response: any = await withTimeout(
         ai.models.generateContent({
           model,
           contents: params.contents,
@@ -2048,16 +2048,33 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+    // Only serve static files if NOT on Vercel
+    if (!process.env.VERCEL) {
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`IRIS full-stack server running on http://localhost:${PORT}`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`IRIS full-stack server running on http://localhost:${PORT}`);
+    });
+  }
 }
 
-startServer();
+// Export app and optionally call startServer
+export default app;
+
+if (!process.env.VERCEL) {
+  startServer();
+} else {
+  // On Vercel, we need to run firestore sync on initialization as well
+  syncDbFromFirestore().then(() => {
+    console.log("[Vercel] DB Synced from Firestore on function warm-up");
+  }).catch((err) => {
+    console.error("[Vercel] Failed to sync DB from Firestore on warm-up:", err);
+  });
+}

@@ -45,12 +45,25 @@ const ELECTRICAL_PARAMS: { [key: string]: string[] } = {
 
 const compressAndConvertToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      // Safe fallback to original base64 if compression hangs/takes too long
+      const readerFallback = new FileReader();
+      readerFallback.onloadend = () => {
+        if (typeof readerFallback.result === "string") {
+          resolve(readerFallback.result);
+        } else {
+          reject(new Error("Compression timed out"));
+        }
+      };
+      readerFallback.onerror = () => reject(new Error("Compression timed out"));
+      readerFallback.readAsDataURL(file);
+    }, 4000);
+
     const reader = new FileReader();
-    reader.readAsDataURL(file);
     reader.onload = (event) => {
       const img = new Image();
-      img.src = event.target?.result as string;
       img.onload = () => {
+        clearTimeout(timeoutId);
         const canvas = document.createElement("canvas");
         const MAX_WIDTH = 800;
         const MAX_HEIGHT = 800;
@@ -72,12 +85,30 @@ const compressAndConvertToBase64 = (file: File): Promise<string> => {
         canvas.height = height;
         const ctx = canvas.getContext("2d");
         ctx?.drawImage(img, 0, 0, width, height);
-        const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.75);
+        // Optimize payload size using 0.70 compression quality
+        const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.70);
         resolve(compressedDataUrl);
       };
-      img.onerror = (err) => reject(err);
+      img.onerror = (err) => {
+        clearTimeout(timeoutId);
+        // If canvas/image loading fails, fallback to original uncompressed base64
+        const readerFallback = new FileReader();
+        readerFallback.onloadend = () => {
+          if (typeof readerFallback.result === "string") {
+            resolve(readerFallback.result);
+          } else {
+            reject(err);
+          }
+        };
+        readerFallback.readAsDataURL(file);
+      };
+      img.src = event.target?.result as string;
     };
-    reader.onerror = (err) => reject(err);
+    reader.onerror = (err) => {
+      clearTimeout(timeoutId);
+      reject(err);
+    };
+    reader.readAsDataURL(file);
   });
 };
 
