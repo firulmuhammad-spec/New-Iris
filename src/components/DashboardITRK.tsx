@@ -4,7 +4,7 @@ import {
   ClipboardList, CheckSquare, Eye, Award, BarChart3, 
   Database, Archive, LogOut, KeyRound, Plus, Trash, 
   Check, X, FileSpreadsheet, ShieldAlert, Sparkles, 
-  Inbox, FileCode, CheckCircle2, AlertTriangle, Upload, Loader2, ArrowRight, Printer 
+  Inbox, FileCode, CheckCircle2, AlertTriangle, Upload, Loader2, ArrowRight, Printer, Calendar 
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import ReportDocument from "./ReportDocument";
@@ -1192,6 +1192,17 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
   // Batch preview buffer
   const [batchPreviewItems, setBatchPreviewItems] = useState<any[]>([]);
+  const [selectedImportDates, setSelectedImportDates] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (batchPreviewItems.length > 0) {
+      const dates = Array.from(new Set(batchPreviewItems.map(item => item.tanggalPPJ).filter(Boolean))) as string[];
+      setSelectedImportDates(dates);
+    } else {
+      setSelectedImportDates([]);
+    }
+  }, [batchPreviewItems]);
+
   const [showBatchCancelConfirm, setShowBatchCancelConfirm] = useState(false);
 
   const updatePreviewItem = (index: number, updatedFields: Partial<any>) => {
@@ -2085,7 +2096,15 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
           });
 
           setAiOcrStep("🧩 Memproses JSON hasil deteksi & memperkaya data acuan...");
-          const data = await response.json();
+          const responseText = await response.text();
+          let data;
+          try {
+            data = JSON.parse(responseText);
+          } catch (jsonErr) {
+            console.error("Non-JSON response received:", responseText);
+            throw new Error(`Respons server tidak valid (bukan JSON, Status: ${response.status}). Hubungi Admin ITRK atau gunakan Impor Manual/Excel. Detail: ${responseText.slice(0, 120)}...`);
+          }
+
           if (data.success && data.parsed) {
             setAiOcrSuccessModel(data.modelUsed || "gemini-3.5-flash");
             const existingVendorsList = Array.from(new Set(registrations.map(r => r.vendor))).filter(Boolean) as string[];
@@ -2269,6 +2288,57 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
     return { category, standardName, standardSource, itemNameOverride };
   };
 
+  // Helper to parse dates in various formats
+  const cleanAndParseDate = (dateCell: string): string => {
+    const text = dateCell.trim();
+    if (!text) return new Date().toISOString().split("T")[0];
+
+    // Try to find a date pattern like DD-MM-YYYY or DD-MM-YY or DD/MM/YYYY or DD/MM/YY
+    const datePattern = /(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/;
+    const match = text.match(datePattern);
+    if (match) {
+      let day = match[1].padStart(2, "0");
+      let month = match[2].padStart(2, "0");
+      let year = match[3];
+      if (year.length === 2) {
+        year = "20" + year;
+      }
+      return `${year}-${month}-${day}`;
+    }
+
+    // Indonesian month names mapping
+    const idMonths: { [key: string]: string } = {
+      januari: "01", pebruari: "02", febuari: "02", februari: "02", maret: "03", april: "04",
+      mei: "05", juni: "06", juli: "07", agustus: "08", september: "09", oktober: "10",
+      nopember: "11", november: "11", desember: "12",
+      jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08",
+      sep: "09", oct: "10", nov: "11", dec: "12"
+    };
+
+    // Check for textual Indonesian date like "1 Juli 2026" or "01 July 2026" or "Rabu, 01 Juli 2026"
+    const cleanText = text.toLowerCase().replace(/^[a-zA-Z\s\/,\-]+/, "").trim(); // strip day name
+    const textParts = cleanText.split(/\s+/);
+    if (textParts.length >= 3) {
+      const day = textParts[0].replace(/\D/g, "").padStart(2, "0");
+      const monthName = textParts[1].toLowerCase();
+      const year = textParts[2].replace(/\D/g, "");
+      const month = idMonths[monthName] || "01";
+      if (day && year && year.length >= 2) {
+        const fullYear = year.length === 2 ? "20" + year : year;
+        return `${fullYear}-${month}-${day}`;
+      }
+    }
+
+    // Fallback to standard YYYY-MM-DD check
+    const ymdPattern = /(\d{4})-(\d{2})-(\d{2})/;
+    const ymdMatch = text.match(ymdPattern);
+    if (ymdMatch) {
+      return ymdMatch[0];
+    }
+
+    return new Date().toISOString().split("T")[0];
+  };
+
   // Import batch data paste from excel TSV or official Petrokimia PPJ CSV layout
   const handleBatchExcelPaste = () => {
     if (!importText.trim()) return;
@@ -2339,18 +2409,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
         }
 
         if (foundDateCell) {
-          // Parse date: e.g. "Rabu/ 01-07-26" -> "2026-07-01" or "07-07-26" -> "2026-07-07"
-          const cleanDate = foundDateCell.replace(/^[a-zA-Z\s\/]+/, "").trim(); // strip day name and slash
-          const parts = cleanDate.split(/[-/]/);
-          if (parts.length === 3) {
-            let day = parts[0].padStart(2, "0");
-            let month = parts[1].padStart(2, "0");
-            let year = parts[2];
-            if (year.length === 2) {
-              year = "20" + year;
-            }
-            currentTanggal = `${year}-${month}-${day}`;
-          }
+          currentTanggal = cleanAndParseDate(foundDateCell);
         }
 
         // 2. Check if data row (starts with a number)
@@ -2389,6 +2448,9 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
               quantity: qtyStr,
               points: category === "karung" ? 5 : 1, // Sack gets 5 points, thread gets 1 point
               description: `Ball/Box: ${ballCount}, Lembar/Kg: ${sheetCount}, Nopol: ${platNomor}`,
+              ballCount: ballCount,
+              sheetCount: sheetCount,
+              platNomor: platNomor,
               tanggalPPJ: currentTanggal
             });
           }
@@ -2691,7 +2753,18 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
       const finalItems: any[] = [];
       let currentRegsList = [...registrations];
 
-      for (const reg of batchPreviewItems) {
+      const itemsToSave = batchPreviewItems.filter(item => {
+        if (!item.tanggalPPJ) return true;
+        return selectedImportDates.includes(item.tanggalPPJ);
+      });
+
+      if (itemsToSave.length === 0) {
+        alert("Peringatan: Tidak ada data sampel yang terpilih berdasarkan tanggal yang dicentang.");
+        setAiScanning(false);
+        return;
+      }
+
+      for (const reg of itemsToSave) {
         const targetYearStr = (reg.tanggalPPJ || new Date().toISOString().split("T")[0]).split("-")[0];
         const ppjFour = String(reg.ppjCode || "0000").padStart(4, "0");
         const ppjFull = `${ppjFour}/LG.01.01/101/MI/${targetYearStr}`;
@@ -2766,7 +2839,8 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
         console.warn("Server-side batch sync failed, but saved to Firestore:", syncErr);
       }
 
-      setBatchPreviewItems([]);
+      // Keep only items that were not imported in the preview buffer
+      setBatchPreviewItems(prev => prev.filter(item => !itemsToSave.includes(item)));
       alert(`Sukses mendaftarkan ${finalItems.length} sampel baru secara batch ke antrean draf!`);
       refreshData();
     } catch (err: any) {
@@ -3249,12 +3323,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
     // Reset or populate Valve photo values and numeric counts
     if (reg.category === "Valve" && reg.results && reg.results[0]?.values) {
       const vVals = reg.results[0].values;
-      setValveManometerPhoto(vVals["manometer_photo"] || "");
-      setValveAllValvesPhoto(vVals["all_valves_photo"] || "");
-      setValveActiveTestPhoto(vVals["active_test_photo"] || "");
-      setValveTotal(vVals["v_total"] || "");
-      setValveLulus(vVals["v_lulus"] || "");
-      setValveGagal(vVals["v_gagal"] || "");
+      setValveManometerPhoto(vVals["manometer_photo"] || vVals["Nilai Pressure"] || "");
+      setValveAllValvesPhoto(vVals["all_valves_photo"] || vVals["Item yang di uji"] || "");
+      setValveActiveTestPhoto(vVals["active_test_photo"] || vVals["sample di uji"] || "");
+      setValveTotal(vVals["v_total"] || vVals["Jumlah Sample"] || "");
+      setValveLulus(vVals["v_lulus"] || vVals["Jumlah Pass"] || "");
+      setValveGagal(vVals["v_gagal"] || vVals["Jumlah Gagal"] || "");
     } else {
       setValveManometerPhoto("");
       setValveAllValvesPhoto("");
@@ -3692,6 +3766,14 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
       updatedValues["v_total"] = valveTotal;
       updatedValues["v_lulus"] = valveLulus;
       updatedValues["v_gagal"] = valveGagal;
+
+      // Literal parameter keys for reports and standards match
+      updatedValues["Nilai Pressure"] = valveManometerPhoto;
+      updatedValues["Item yang di uji"] = valveAllValvesPhoto;
+      updatedValues["sample di uji"] = valveActiveTestPhoto;
+      updatedValues["Jumlah Sample"] = valveTotal;
+      updatedValues["Jumlah Pass"] = valveLulus;
+      updatedValues["Jumlah Gagal"] = valveGagal;
     }
 
     // Save active point to points lists
@@ -5074,16 +5156,65 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                         onClick={handleConfirmBatchRegister}
                         className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-extrabold px-4 py-1.5 rounded-lg shadow-md flex items-center gap-1 transition-all cursor-pointer"
                       >
-                        <Check className="w-4 h-4" /> Simpan Semua ({batchPreviewItems.length} Sampel)
+                        <Check className="w-4 h-4" /> Simpan {
+                          batchPreviewItems.filter(item => !item.tanggalPPJ || selectedImportDates.includes(item.tanggalPPJ)).length === batchPreviewItems.length
+                            ? `Semua (${batchPreviewItems.length} Sampel)`
+                            : `Terpilih (${batchPreviewItems.filter(item => !item.tanggalPPJ || selectedImportDates.includes(item.tanggalPPJ)).length} dari ${batchPreviewItems.length} Sampel)`
+                        }
                       </button>
                     </div>
                   </div>
+
+                  {/* Filter Tanggal Batch */}
+                  {Array.from(new Set(batchPreviewItems.map(item => item.tanggalPPJ).filter(Boolean))).length > 1 && (
+                    <div className="bg-white border border-amber-200 rounded-xl p-3 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-amber-700 shrink-0" />
+                        <div>
+                          <span className="text-xs font-extrabold text-amber-950 block">Pilah Tanggal Importasi Karung/Benang</span>
+                          <span className="text-[10px] text-slate-500 block">AI mendeteksi beberapa lembar sheet / tanggal dalam batch ini. Pilih tanggal mana saja yang akan dimasukkan ke antrean draf:</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        {Array.from(new Set(batchPreviewItems.map(item => item.tanggalPPJ).filter(Boolean))).map((tgl: any) => {
+                          const count = batchPreviewItems.filter(item => item.tanggalPPJ === tgl).length;
+                          const isChecked = selectedImportDates.includes(tgl);
+                          return (
+                            <label
+                              key={tgl}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-bold cursor-pointer transition-all select-none ${
+                                isChecked
+                                  ? "bg-amber-100 border-amber-400 text-amber-950 shadow-sm font-extrabold"
+                                  : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {
+                                  if (isChecked) {
+                                    setSelectedImportDates(prev => prev.filter(d => d !== tgl));
+                                  } else {
+                                    setSelectedImportDates(prev => [...prev, tgl]);
+                                  }
+                                }}
+                                className="rounded text-amber-600 focus:ring-amber-500 w-3.5 h-3.5 cursor-pointer"
+                              />
+                              <span>{tgl}</span>
+                              <span className="px-1.5 py-0.2 bg-slate-200/60 rounded-full text-[9px] text-slate-700">{count} sampel</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="overflow-x-auto max-h-96 border border-amber-300 rounded-xl bg-white shadow-inner">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-amber-100 text-amber-950 border-b border-amber-300 font-extrabold uppercase text-[10px] select-none sticky top-0 z-10">
                         <tr>
                           <th className="p-3 w-20">No PPJ</th>
+                          <th className="p-3 w-28">Tanggal PPJ</th>
                           <th className="p-3 min-w-[200px]">Nama Barang / Material</th>
                           <th className="p-3 min-w-[180px]">Deskripsi Internal (===)</th>
                           <th className="p-3 min-w-[150px]">Vendor</th>
@@ -5105,6 +5236,16 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                                 placeholder="1023"
                                 onChange={(e) => updatePreviewItem(idx, { ppjCode: e.target.value })}
                                 className="w-16 border border-slate-200 hover:border-amber-400 focus:border-amber-600 rounded px-1.5 py-1 text-xs font-black text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/10 transition-colors"
+                              />
+                            </td>
+
+                            {/* TANGGAL PPJ INPUT */}
+                            <td className="p-2.5">
+                              <input
+                                type="date"
+                                value={item.tanggalPPJ || ""}
+                                onChange={(e) => updatePreviewItem(idx, { tanggalPPJ: e.target.value })}
+                                className="w-28 border border-slate-200 hover:border-amber-400 focus:border-amber-600 rounded px-1.5 py-1 text-xs font-bold text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/10 transition-colors"
                               />
                             </td>
 
@@ -5201,6 +5342,17 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                                   let defaults = {};
                                   if (cat === "logam") {
                                     defaults = { standardSource: "ASTM A403", standardName: "WP304L" };
+                                  } else if (["benang", "Valve", "filter cloth", "rubber"].includes(cat)) {
+                                    const foundStd = standards.find(s => s.category === cat);
+                                    if (foundStd) {
+                                      defaults = {
+                                        standardName: foundStd.name,
+                                        standardSource: foundStd.source || "KSM INTERNAL",
+                                        itemName: cat === "karung" ? (foundStd.defaultNamaKarung || foundStd.name) : (item.itemName || foundStd.name)
+                                      };
+                                    } else {
+                                      defaults = { standardSource: "KSM INTERNAL", standardName: "STANDAR INTERNAL" };
+                                    }
                                   } else {
                                     defaults = { standardSource: "KSM INTERNAL", standardName: "STANDAR INTERNAL" };
                                   }
@@ -6899,12 +7051,12 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                       {/* LOT DISPOSITION NUMBERS */}
                       <div className="bg-white border rounded-2xl p-5 shadow-sm space-y-4">
                         <h4 className="font-extrabold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
-                          <span>📦</span> 1. Input Disposisi Keadaan Lot Valve
+                          <span>📦</span> Input Disposisi Keadaan Lot Valve
                         </h4>
                         
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-indigo-900 uppercase block">Jumlah Valve Diuji (Total Lot)</label>
+                            <label className="text-[10px] font-bold text-indigo-900 uppercase block">jumlah sample</label>
                             <input
                               type="number"
                               required
@@ -6916,7 +7068,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-indigo-950 uppercase block">Jumlah Valve Lulus (Pass)</label>
+                            <label className="text-[10px] font-bold text-indigo-950 uppercase block">jumlah pass</label>
                             <input
                               type="number"
                               required
@@ -6928,7 +7080,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-indigo-955 uppercase block">Jumlah Valve Gagal (Fail)</label>
+                            <label className="text-[10px] font-bold text-indigo-955 uppercase block">jumlah fail</label>
                             <input
                               type="number"
                               required
@@ -6950,7 +7102,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           {/* Photo 1: Manometer */}
                           <div className="space-y-2 text-center border p-3.5 rounded-xl bg-slate-50/50">
-                            <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest leading-none mb-1">METER TEKANAN (MANOMETER)</p>
+                            <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest leading-none mb-1">NILAI PRESSURE</p>
                             {valveManometerPhoto ? (
                               <div className="relative group rounded-lg overflow-hidden border border-slate-200">
                                 <img src={valveManometerPhoto} className="w-full h-32 object-cover" alt="Manometer preview" />
@@ -6965,7 +7117,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                             ) : (
                               <label className="border-2 border-dashed rounded-lg h-32 flex flex-col justify-center items-center cursor-pointer group hover:bg-indigo-50/20 hover:border-indigo-400 transition-all">
                                 <Upload className="w-6 h-6 text-slate-400 group-hover:scale-105 transition-transform" />
-                                <span className="text-[10px] font-bold text-indigo-650 mt-1">Sertakan Bukti Uji</span>
+                                <span className="text-[10px] font-bold text-indigo-650 mt-1">Pilih Nilai Pressure</span>
                                 <input
                                   type="file"
                                   accept="image/*"
@@ -6984,7 +7136,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
                           {/* Photo 2: All Lot */}
                           <div className="space-y-2 text-center border p-3.5 rounded-xl bg-slate-50/50">
-                            <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest leading-none mb-1">FOTO KESELURUHAN LOT VALVE</p>
+                            <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest leading-none mb-1">ITEM YANG DI UJI</p>
                             {valveAllValvesPhoto ? (
                               <div className="relative group rounded-lg overflow-hidden border border-slate-200">
                                 <img src={valveAllValvesPhoto} className="w-full h-32 object-cover" alt="All valves preview" />
@@ -6999,7 +7151,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                             ) : (
                               <label className="border-2 border-dashed rounded-lg h-32 flex flex-col justify-center items-center cursor-pointer group hover:bg-indigo-50/20 hover:border-indigo-400 transition-all">
                                 <Upload className="w-6 h-6 text-slate-400 group-hover:scale-105 transition-transform" />
-                                <span className="text-[10px] font-bold text-indigo-650 mt-1">Sertakan Bukti Lot</span>
+                                <span className="text-[10px] font-bold text-indigo-650 mt-1">Pilih Item Yang Di Uji</span>
                                 <input
                                   type="file"
                                   accept="image/*"
@@ -7018,7 +7170,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
 
                           {/* Photo 3: Active Pressure Test */}
                           <div className="space-y-2 text-center border p-3.5 rounded-xl bg-slate-50/50">
-                            <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest leading-none mb-1">VALVE KETIKA DITEKAN</p>
+                            <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest leading-none mb-1">SAMPLE DI UJI</p>
                             {valveActiveTestPhoto ? (
                               <div className="relative group rounded-lg overflow-hidden border border-slate-200">
                                 <img src={valveActiveTestPhoto} className="w-full h-32 object-cover" alt="Active test preview" />
@@ -7033,7 +7185,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
                             ) : (
                               <label className="border-2 border-dashed rounded-lg h-32 flex flex-col justify-center items-center cursor-pointer group hover:bg-indigo-50/20 hover:border-indigo-400 transition-all">
                                 <Upload className="w-6 h-6 text-slate-400 group-hover:scale-105 transition-transform" />
-                                <span className="text-[10px] font-bold text-indigo-650 mt-1">Sertakan Bukti Tekan</span>
+                                <span className="text-[10px] font-bold text-indigo-650 mt-1">Pilih Sample Di Uji</span>
                                 <input
                                   type="file"
                                   accept="image/*"

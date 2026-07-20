@@ -91,7 +91,8 @@ const DEFAULT_STANDARDS = [
     source: "KSM-B01",
     description: "Standar Benang jahit karung",
     parameters: [
-      { name: "Tensile Strength", unit: "kgf", spec: "Min 6.8" },
+      { name: "Kuat Tarik", unit: "Kgf", spec: "Min 6.8" },
+      { name: "Berat", unit: "Gr", spec: "1.25 - 1.30" },
       { name: "Nomor Pita", unit: "denier", spec: "1250 - 1300" },
       { name: "Tenacity", unit: "gr/denier", spec: "Min 5.2" }
     ]
@@ -114,24 +115,28 @@ const DEFAULT_STANDARDS = [
   {
     id: "std-7",
     category: "Valve",
-    name: "Standard Pressure Test Workshop PG",
-    source: "PO Spec Check",
-    description: "Pressure test parameters for rating class 150 valves",
+    name: "Standard Pengujian Valve",
+    source: "KSM INTERNAL",
+    description: "Standar pengujian hydrostatic & pneumatic valve",
     parameters: [
-      { name: "Shell Hydrostatic Test", unit: "Bar", spec: "30 Bar - No Leak" },
-      { name: "Seat Pneumatic Test", unit: "Bar", spec: "6 Bar - No Leak" },
-      { name: "Body Material Check", unit: "Text", spec: "Match PO" }
+      { name: "Nilai Pressure", unit: "Psi", spec: "Sesuai PO" },
+      { name: "Item yang di uji", unit: "Text", spec: "Sesuai PO" },
+      { name: "sample di uji", unit: "Text", spec: "Sesuai PO" },
+      { name: "Jumlah Sample", unit: "Pcs", spec: "Sesuai PO" },
+      { name: "Jumlah Pass", unit: "Pcs", spec: "Sesuai PO" },
+      { name: "Jumlah Gagal", unit: "Pcs", spec: "0" },
+      { name: "Shell Hydrostatic Test", unit: "Status", spec: "LULUS / MEMENUHI SYARAT" },
+      { name: "Seat Pneumatic Test", unit: "Status", spec: "LULUS / MEMENUHI SYARAT" }
     ]
   },
   {
     id: "std-8",
     category: "filter cloth",
-    name: "Filter Cloth Air Permeability",
-    source: "PO Spec Check",
-    description: "Air continuous permeability specs from purchase order",
+    name: "Standard Filter Cloth",
+    source: "KSM INTERNAL",
+    description: "Standar pengujian filter cloth air permeability",
     parameters: [
-      { name: "Air Permeability", unit: "L/dm²/min", spec: "" },
-      { name: "Weight", unit: "g/m²", spec: "450 - 500" }
+      { name: "Air Permeability", unit: "cc/cm2/s", spec: "125 - 175" }
     ]
   },
   {
@@ -1420,33 +1425,53 @@ app.post("/api/master/signatures-toggle", (req, res) => {
   }
 });
 
+// Helper to enforce a timeout on long-running promises (e.g. Gemini API calls)
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: NodeJS.Timeout;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Batas waktu (timeout) tercapai setelah ${timeoutMs / 1000} detik.`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
+
 // Reusable helper to execute generateContent with dynamic model failover & retries to prevent 503/429/UNAVAILABLE errors
 async function generateContentWithFallback(ai: any, params: {
   contents: any;
   config?: any;
 }) {
   const models = [
+    "gemini-3.5-flash",
     "gemini-2.5-flash",
-    "gemini-1.5-flash",
-    "gemini-2.5-pro",
-    "gemini-1.5-pro"
+    "gemini-3.1-pro-preview"
   ];
   
   let lastError: any = null;
   for (const model of models) {
     try {
       console.log(`[Gemini API] Menghubungi model: ${model}...`);
-      const response = await ai.models.generateContent({
-        model,
-        contents: params.contents,
-        config: params.config
-      });
+      
+      // Enforce a 60-second timeout on each model request to prevent long hangs
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: params.contents,
+          config: params.config
+        }),
+        60000
+      );
+      
       console.log(`[Gemini API] Berhasil terhubung menggunakan model: ${model}`);
-      return response;
+      return {
+        text: response.text,
+        modelUsed: model
+      };
     } catch (err: any) {
-      console.warn(`[Gemini API] Model ${model} gagal atau sibuk:`, err.message || err);
+      console.warn(`[Gemini API] Model ${model} gagal atau sibuk/timeout:`, err.message || err);
       lastError = err;
-      const errorMsg = String(err.message || "").toLowerCase();
       // Continue and try the next model regardless of the error type to achieve ultimate fault-tolerance!
       continue;
     }
@@ -1789,7 +1814,7 @@ Output structured JSON list matching the schema under Type.ARRAY.`
       };
 
       const enrichedList = parsedList.map(enrichParsedItem);
-      return res.json({ success: true, parsed: enrichedList });
+      return res.json({ success: true, parsed: enrichedList, modelUsed: response.modelUsed });
     } else {
       // Text prompt analysis
       const response = await generateContentWithFallback(ai, {
@@ -1855,7 +1880,7 @@ Output structured JSON list matching the schema under Type.ARRAY.`
       };
 
       const enrichedList = parsedList.map(enrichParsedItem);
-      return res.json({ success: true, parsed: enrichedList });
+      return res.json({ success: true, parsed: enrichedList, modelUsed: response.modelUsed });
     }
   } catch (error: any) {
     console.error("Gemini API Error:", error);

@@ -74,7 +74,8 @@ export const DEFAULT_STANDARDS = [
     source: "KSM-B01",
     description: "Standar Benang jahit karung",
     parameters: [
-      { name: "Tensile Strength", unit: "kgf", spec: "Min 6.8" },
+      { name: "Kuat Tarik", unit: "Kgf", spec: "Min 6.8" },
+      { name: "Berat", unit: "Gr", spec: "1.25 - 1.30" },
       { name: "Nomor Pita", unit: "denier", spec: "1250 - 1300" },
       { name: "Tenacity", unit: "gr/denier", spec: "Min 5.2" }
     ]
