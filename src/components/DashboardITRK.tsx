@@ -74,8 +74,8 @@ const compressAndConvertToBase64 = (file: File): Promise<string> => {
       img.onload = () => {
         clearTimeout(timeoutId);
         const canvas = document.createElement("canvas");
-        const MAX_WIDTH = 900;
-        const MAX_HEIGHT = 900;
+        const MAX_WIDTH = 750;
+        const MAX_HEIGHT = 750;
         let width = img.width;
         let height = img.height;
 
@@ -94,8 +94,8 @@ const compressAndConvertToBase64 = (file: File): Promise<string> => {
         canvas.height = Math.round(height);
         const ctx = canvas.getContext("2d");
         ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-        // Optimize payload size using 0.65 compression quality (~150KB-300KB)
-        const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.65);
+        // Optimize payload size using 0.55 compression quality (~80KB-150KB) for lightning fast serverless OCR
+        const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.55);
         resolve(compressedDataUrl);
       };
       img.onerror = () => {
@@ -2135,7 +2135,10 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
             data = JSON.parse(responseText);
           } catch (jsonErr) {
             console.error("Non-JSON response received:", responseText);
-            throw new Error(`Respons server tidak valid (bukan JSON, Status: ${response.status}). Hubungi Admin ITRK atau gunakan Impor Manual/Excel. Detail: ${responseText.slice(0, 120)}...`);
+            if (response.status === 500 || responseText.includes("FUNCTION_INVOCATION_FAILED")) {
+              throw new Error(`Serverless Vercel mengalami batas waktu (timeout) atau pembatasan memori saat OCR. Resolusi berkas telah diturunkan otomatis; silakan coba klik 'Proses dengan AI Gemini' sekali lagi atau gunakan Impor Excel.`);
+            }
+            throw new Error(`Respons server tidak valid (bukan JSON, Status: ${response.status}). Hubungi Admin ITRK atau gunakan Impor Manual/Excel.`);
           }
 
           if (data.success && data.parsed) {

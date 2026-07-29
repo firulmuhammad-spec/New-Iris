@@ -1459,7 +1459,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
-// Reusable helper to execute generateContent with dynamic model failover & retries to prevent 503/429/UNAVAILABLE errors
+// Reusable helper to execute generateContent with dynamic model failover to prevent 503/429/UNAVAILABLE errors
 async function generateContentWithFallback(ai: any, params: {
   contents: any;
   config?: any;
@@ -1473,38 +1473,28 @@ async function generateContentWithFallback(ai: any, params: {
   
   let lastError: any = null;
   for (const model of models) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        console.log(`[Gemini API] Menghubungi model: ${model} (percobaan ${attempt})...`);
-        
-        // Enforce an 18-second timeout on each model request to keep total runtime safe on Vercel serverless
-        const response: any = await withTimeout(
-          ai.models.generateContent({
-            model,
-            contents: params.contents,
-            config: params.config
-          }),
-          18000
-        );
-        
-        console.log(`[Gemini API] Berhasil terhubung menggunakan model: ${model}`);
-        return {
-          text: response.text,
-          modelUsed: model
-        };
-      } catch (err: any) {
-        lastError = err;
-        const errMsg = err?.message || String(err);
-        console.warn(`[Gemini API] Model ${model} (percobaan ${attempt}) gagal:`, errMsg);
-        
-        if (errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("Quota exceeded")) {
-          break; // Skip to next model immediately on quota errors
-        }
-        
-        if (attempt === 1) {
-          await new Promise((r) => setTimeout(r, 2000));
-        }
-      }
+    try {
+      console.log(`[Gemini API] Menghubungi model: ${model}...`);
+      
+      // Enforce a tight 7-second timeout per model call to fit within Vercel serverless limits
+      const response: any = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: params.contents,
+          config: params.config
+        }),
+        7000
+      );
+      
+      console.log(`[Gemini API] Berhasil terhubung menggunakan model: ${model}`);
+      return {
+        text: response.text,
+        modelUsed: model
+      };
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = err?.message || String(err);
+      console.warn(`[Gemini API] Model ${model} gagal:`, errMsg);
     }
   }
   throw lastError || new Error("Semua model Gemini sedang sibuk atau tidak tersedia saat ini. Silakan coba beberapa saat lagi.");
