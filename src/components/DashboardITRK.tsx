@@ -45,19 +45,28 @@ const ELECTRICAL_PARAMS: { [key: string]: string[] } = {
 
 const compressAndConvertToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
+    // If not an image file or already very small (< 200KB), read directly
+    if (!file.type.startsWith("image/") && file.size < 250000) {
+      const readerDirect = new FileReader();
+      readerDirect.onloadend = () => resolve(readerDirect.result as string);
+      readerDirect.onerror = () => reject(new Error("Gagal membaca berkas"));
+      readerDirect.readAsDataURL(file);
+      return;
+    }
+
     const timeoutId = setTimeout(() => {
-      // Safe fallback to original base64 if compression hangs/takes too long
       const readerFallback = new FileReader();
       readerFallback.onloadend = () => {
-        if (typeof readerFallback.result === "string") {
-          resolve(readerFallback.result);
+        const res = readerFallback.result as string;
+        if (res && res.length < 3500000) {
+          resolve(res);
         } else {
-          reject(new Error("Compression timed out"));
+          reject(new Error("Ukuran gambar terlalu besar (melebihi batas Vercel 4.5MB). Silakan gunakan gambar dengan resolusi lebih rendah."));
         }
       };
-      readerFallback.onerror = () => reject(new Error("Compression timed out"));
+      readerFallback.onerror = () => reject(new Error("Pengompresan gambar batas waktu habis"));
       readerFallback.readAsDataURL(file);
-    }, 4000);
+    }, 8000);
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -65,8 +74,8 @@ const compressAndConvertToBase64 = (file: File): Promise<string> => {
       img.onload = () => {
         clearTimeout(timeoutId);
         const canvas = document.createElement("canvas");
-        const MAX_WIDTH = 800;
-        const MAX_HEIGHT = 800;
+        const MAX_WIDTH = 900;
+        const MAX_HEIGHT = 900;
         let width = img.width;
         let height = img.height;
 
@@ -81,25 +90,18 @@ const compressAndConvertToBase64 = (file: File): Promise<string> => {
             height = MAX_HEIGHT;
           }
         }
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = Math.round(width);
+        canvas.height = Math.round(height);
         const ctx = canvas.getContext("2d");
-        ctx?.drawImage(img, 0, 0, width, height);
-        // Optimize payload size using 0.70 compression quality
-        const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.70);
+        ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+        // Optimize payload size using 0.65 compression quality (~150KB-300KB)
+        const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.65);
         resolve(compressedDataUrl);
       };
-      img.onerror = (err) => {
+      img.onerror = () => {
         clearTimeout(timeoutId);
-        // If canvas/image loading fails, fallback to original uncompressed base64
         const readerFallback = new FileReader();
-        readerFallback.onloadend = () => {
-          if (typeof readerFallback.result === "string") {
-            resolve(readerFallback.result);
-          } else {
-            reject(err);
-          }
-        };
+        readerFallback.onloadend = () => resolve(readerFallback.result as string);
         readerFallback.readAsDataURL(file);
       };
       img.src = event.target?.result as string;

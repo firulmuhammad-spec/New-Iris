@@ -393,6 +393,17 @@ const DEFAULT_REGISTRATIONS = [
 ];
 
 const DB_PATH = path.join(process.cwd(), "db.json");
+let inMemoryDbCache: any = null;
+
+function safeWriteDbToDisk(data: any) {
+  inMemoryDbCache = data;
+  try {
+    const targetPath = process.env.VERCEL ? path.join("/tmp", "db.json") : DB_PATH;
+    fs.writeFileSync(targetPath, JSON.stringify(data, null, 2));
+  } catch (err: any) {
+    console.warn("[DB Disk Write] Skipped writing db.json to disk (read-only filesystem):", err?.message || err);
+  }
+}
 
 // Initialize Firebase SDK
 let firebaseApp: any;
@@ -446,7 +457,7 @@ async function syncDbFromFirestore() {
         ]
       };
       
-      fs.writeFileSync(DB_PATH, JSON.stringify(finalData, null, 2));
+      safeWriteDbToDisk(finalData);
     } else {
       console.log("Firestore database is empty. Seeding initial data from local default database...");
       const dbData = loadDb();
@@ -731,10 +742,16 @@ function parseKarungCsv() {
 }
 
 function loadDb() {
+  if (inMemoryDbCache) {
+    return inMemoryDbCache;
+  }
+
   let dbData: any;
   try {
-    if (fs.existsSync(DB_PATH)) {
-      const content = fs.readFileSync(DB_PATH, "utf-8");
+    const tmpPath = path.join("/tmp", "db.json");
+    const readPath = (process.env.VERCEL && fs.existsSync(tmpPath)) ? tmpPath : DB_PATH;
+    if (fs.existsSync(readPath)) {
+      const content = fs.readFileSync(readPath, "utf-8");
       dbData = JSON.parse(content);
     } else {
       dbData = {
@@ -819,24 +836,22 @@ function loadDb() {
 
     dbData.registrations = sorted;
     dbData.hasReindexed = true;
-    try {
-      fs.writeFileSync(DB_PATH, JSON.stringify(dbData, null, 2));
-    } catch (e) {
-      console.error("Error writing migrated dbData in loadDb:", e);
-    }
+    safeWriteDbToDisk(dbData);
+  } else {
+    inMemoryDbCache = dbData;
   }
 
   return dbData;
 }
 
 async function saveDb(data: any) {
-  try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-    if (firestoreDb) {
+  safeWriteDbToDisk(data);
+  if (firestoreDb) {
+    try {
       await syncFirestoreData(data);
+    } catch (err) {
+      console.error("Error saving database file to Firestore:", err);
     }
-  } catch (err) {
-    console.error("Error saving database file:", err);
   }
 }
 
@@ -1497,17 +1512,24 @@ async function generateContentWithFallback(ai: any, params: {
 
 // Gemini AI Proxy OCR/File translation endpoint
 app.post("/api/gemini/parse", async (req, res) => {
-  const { promptText, base64Image, mimeType } = req.body;
-  
-  const dbData = loadDb();
-  const registeredVendors = new Set<string>();
-  if (dbData.registrations) {
-    dbData.registrations.forEach((r: any) => {
-      if (r.vendor) {
-        registeredVendors.add(r.vendor.trim().toUpperCase());
-      }
-    });
-  }
+  try {
+    const { promptText, base64Image, mimeType } = req.body || {};
+    
+    let dbData: any = { registrations: [], standards: [] };
+    try {
+      dbData = loadDb();
+    } catch (e) {
+      console.warn("Could not load DB in /api/gemini/parse:", e);
+    }
+
+    const registeredVendors = new Set<string>();
+    if (dbData && dbData.registrations) {
+      dbData.registrations.forEach((r: any) => {
+        if (r.vendor) {
+          registeredVendors.add(r.vendor.trim().toUpperCase());
+        }
+      });
+    }
 
   if (!process.env.GEMINI_API_KEY) {
     // If no API Key, return simulated parsing to let the user see how wonderfully it works
@@ -1703,8 +1725,7 @@ app.post("/api/gemini/parse", async (req, res) => {
     });
   }
 
-  try {
-    const ai = new GoogleGenAI({
+  const ai = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
       httpOptions: {
         headers: {
@@ -1904,7 +1925,7 @@ Output structured JSON list matching the schema under Type.ARRAY.`
     }
   } catch (error: any) {
     console.error("Gemini API Error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message || "Gagal memproses parsing AI Gemini." });
   }
 });
 
