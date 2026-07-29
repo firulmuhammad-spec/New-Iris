@@ -871,7 +871,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
       const data = await res.json();
       if (data.success && data.parsed) {
         const p = data.parsed;
-        setNameplateOcrModel(data.modelUsed || "gemini-3.5-flash");
+        setNameplateOcrModel(data.modelUsed || "gemini-2.5-flash");
         
         // Helper to solve matching text choosing the more detailed string
         const selectMoreDetailed = (str1: string, str2: string) => {
@@ -945,7 +945,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
         // Increment daily usage quota
         incrementDailyOcr();
         setNameplateOcrStep("🎉 Sukses mencocokkan & memadankan!");
-        alert(`🎉 Bantuan AI berhasil memadankan & mengisi spesifikasi nameplate! (${dailyOcrCount + 1}/10 scan terpakai hari ini, Model: ${data.modelUsed || "gemini-3.5-flash"})`);
+        alert(`🎉 Bantuan AI berhasil memadankan & mengisi spesifikasi nameplate! (${dailyOcrCount + 1}/10 scan terpakai hari ini, Model: ${data.modelUsed || "gemini-2.5-flash"})`);
       } else {
         setNameplateOcrStep("");
         alert(data.message || "Gagal memproses gambar nameplate via AI.");
@@ -2118,7 +2118,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
           setOcrBase64(base64Str);
 
           setAiOcrStep("🚀 Mengirimkan berkas ke Server Departemen ITRK...");
-          setAiOcrStep("🤖 Memanggil model kecerdasan buatan Gemini 3.5 Flash (proses scanning & OCR)...");
+          setAiOcrStep("🤖 Memanggil model kecerdasan buatan Gemini 2.5 Flash (proses scanning & OCR)...");
           const response = await fetch("/api/gemini/parse", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -2142,7 +2142,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
           }
 
           if (data.success && data.parsed) {
-            setAiOcrSuccessModel(data.modelUsed || "gemini-3.5-flash");
+            setAiOcrSuccessModel(data.modelUsed || "gemini-2.5-flash");
             const existingVendorsList = Array.from(new Set(registrations.map(r => r.vendor))).filter(Boolean) as string[];
             const normalizedParsed = data.parsed.map((item: any) => ({
               ...item,
@@ -2151,7 +2151,7 @@ export default function DashboardITRK({ currentUser, onLogout, allData, onDataRe
             // Put parsed items in the preview buffer
             setBatchPreviewItems(normalizedParsed);
             setAiOcrStep("🎉 Selesai! Semua baris berhasil diurai.");
-            alert(`Sukses! AI menemukan ${data.parsed.length} barang pada dokumen. Silakan periksa pratinjau daftar di bawah. (Model: ${data.modelUsed || "gemini-3.5-flash"})`);
+            alert(`Sukses! AI menemukan ${data.parsed.length} barang pada dokumen. Silakan periksa pratinjau daftar di bawah. (Model: ${data.modelUsed || "gemini-2.5-flash"})`);
           } else {
             setAiError(data.message || "Gagal parsing.");
             setAiOcrStep("");

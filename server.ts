@@ -1465,10 +1465,9 @@ async function generateContentWithFallback(ai: any, params: {
   config?: any;
 }) {
   const models = [
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-flash-latest",
-    "gemini-3.1-flash-lite"
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash"
   ];
   
   let lastError: any = null;
@@ -1476,14 +1475,14 @@ async function generateContentWithFallback(ai: any, params: {
     try {
       console.log(`[Gemini API] Menghubungi model: ${model}...`);
       
-      // Enforce a tight 7-second timeout per model call to fit within Vercel serverless limits
+      // Enforce a tight 8-second timeout per model call to fit within Vercel serverless limits
       const response: any = await withTimeout(
         ai.models.generateContent({
           model,
           contents: params.contents,
           config: params.config
         }),
-        7000
+        8000
       );
       
       console.log(`[Gemini API] Berhasil terhubung menggunakan model: ${model}`);
@@ -1915,7 +1914,10 @@ Output structured JSON list matching the schema under Type.ARRAY.`
     }
   } catch (error: any) {
     console.error("Gemini API Error:", error);
-    return res.status(500).json({ success: false, message: error.message || "Gagal memproses parsing AI Gemini." });
+    return res.status(200).json({
+      success: false,
+      message: `Gagal memproses OCR via Gemini (${error?.message || "Batas waktu atau server busy"}). Anda dapat mencoba lagi atau menggunakan Impor Excel.`
+    });
   }
 });
 
@@ -2027,7 +2029,10 @@ Ensure any fields that are not visible or unrecognizable are filled with a hyphe
     }
   } catch (error: any) {
     console.error("Gemini Nameplate OCR Error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(200).json({
+      success: false,
+      message: `Gagal memproses Nameplate OCR (${error?.message || "Batas waktu atau server busy"}).`
+    });
   }
 });
 
