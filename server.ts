@@ -1433,6 +1433,12 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
       reject(new Error(`Batas waktu (timeout) tercapai setelah ${timeoutMs / 1000} detik.`));
     }, timeoutMs);
   });
+  
+  // Safely catch any rejections on the original promise to prevent Node process unhandledRejection crashes
+  promise.catch((err) => {
+    console.warn("[withTimeout] Original promise rejected after timeout/settlement:", err?.message || err);
+  });
+
   return Promise.race([promise, timeoutPromise]).finally(() => {
     clearTimeout(timeoutId);
   });
@@ -1444,36 +1450,46 @@ async function generateContentWithFallback(ai: any, params: {
   config?: any;
 }) {
   const models = [
+    "gemini-3.6-flash",
     "gemini-3.5-flash",
-    "gemini-2.5-flash",
-    "gemini-3.1-pro-preview"
+    "gemini-flash-latest",
+    "gemini-3.1-flash-lite"
   ];
   
   let lastError: any = null;
   for (const model of models) {
-    try {
-      console.log(`[Gemini API] Menghubungi model: ${model}...`);
-      
-      // Enforce a 60-second timeout on each model request to prevent long hangs
-      const response: any = await withTimeout(
-        ai.models.generateContent({
-          model,
-          contents: params.contents,
-          config: params.config
-        }),
-        60000
-      );
-      
-      console.log(`[Gemini API] Berhasil terhubung menggunakan model: ${model}`);
-      return {
-        text: response.text,
-        modelUsed: model
-      };
-    } catch (err: any) {
-      console.warn(`[Gemini API] Model ${model} gagal atau sibuk/timeout:`, err.message || err);
-      lastError = err;
-      // Continue and try the next model regardless of the error type to achieve ultimate fault-tolerance!
-      continue;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        console.log(`[Gemini API] Menghubungi model: ${model} (percobaan ${attempt})...`);
+        
+        // Enforce a 45-second timeout on each model request to prevent long hangs
+        const response: any = await withTimeout(
+          ai.models.generateContent({
+            model,
+            contents: params.contents,
+            config: params.config
+          }),
+          45000
+        );
+        
+        console.log(`[Gemini API] Berhasil terhubung menggunakan model: ${model}`);
+        return {
+          text: response.text,
+          modelUsed: model
+        };
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = err?.message || String(err);
+        console.warn(`[Gemini API] Model ${model} (percobaan ${attempt}) gagal:`, errMsg);
+        
+        if (errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("Quota exceeded")) {
+          break; // Skip to next model immediately on quota errors
+        }
+        
+        if (attempt === 1) {
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
     }
   }
   throw lastError || new Error("Semua model Gemini sedang sibuk atau tidak tersedia saat ini. Silakan coba beberapa saat lagi.");
@@ -1698,10 +1714,14 @@ app.post("/api/gemini/parse", async (req, res) => {
     });
 
     if (base64Image && mimeType) {
+      let rawBase64 = base64Image;
+      if (base64Image.includes(",")) {
+        rawBase64 = base64Image.split(",")[1];
+      }
       const imagePart = {
         inlineData: {
           mimeType: mimeType,
-          data: base64Image
+          data: rawBase64
         }
       };
       
