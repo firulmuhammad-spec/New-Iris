@@ -1462,14 +1462,14 @@ async function generateContentWithFallback(ai: any, params: {
       try {
         console.log(`[Gemini API] Menghubungi model: ${model} (percobaan ${attempt})...`);
         
-        // Enforce a 45-second timeout on each model request to prevent long hangs
+        // Enforce an 18-second timeout on each model request to keep total runtime safe on Vercel serverless
         const response: any = await withTimeout(
           ai.models.generateContent({
             model,
             contents: params.contents,
             config: params.config
           }),
-          45000
+          18000
         );
         
         console.log(`[Gemini API] Berhasil terhubung menggunakan model: ${model}`);
